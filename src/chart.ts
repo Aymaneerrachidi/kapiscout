@@ -1,8 +1,6 @@
-import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
 import sharp from "sharp";
 import type { Address } from "viem";
+import { MASCOT_BASE64 } from "./assets.js";
 import type { CallRecord, Candle, ChartMetric, ChartTimeframe, MarketSnapshot, TokenScan } from "./types.js";
 import { compactAddress, formatAge, formatCompactNumber, formatUsd } from "./utils.js";
 
@@ -39,8 +37,6 @@ const chartSpecs: Record<Exclude<ChartTimeframe, "auto">, { unit: "minute" | "ho
   "4h": { unit: "hour", aggregate: 4, limit: 120 },
   "1d": { unit: "day", aggregate: 1, limit: 120 },
 };
-
-let mascotDataUrl: Promise<string> | null = null;
 
 export class ChartClient {
   private readonly cache = new Map<string, { expiresAt: number; value: ChartSeries }>();
@@ -122,7 +118,7 @@ export async function generateChartCard(
   metric: ChartMetric,
   call: CallRecord | null,
 ): Promise<Buffer> {
-  const mascotUrl = await mascot();
+  const mascotUrl = MASCOT_BASE64;
   const currentMc = scan.market.marketCapUsd ?? scan.market.fdvUsd;
   const factor = metric === "market_cap" && scan.market.priceUsd && currentMc
     ? currentMc / scan.market.priceUsd
@@ -155,7 +151,7 @@ export async function generateChartCard(
     return `
       <line x1="${plot.x}" y1="${gridY}" x2="${plot.x + plot.width}" y2="${gridY}" stroke="#133623" stroke-width="1" stroke-dasharray="3 4"/>
       <rect x="${plot.x + plot.width - 96}" y="${gridY - 11}" width="96" height="20" rx="6" fill="#091C12" stroke="#17442B" stroke-width="1"/>
-      <text x="${plot.x + plot.width - 8}" y="${gridY + 3}" text-anchor="end" fill="#88AE9B" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, monospace" font-size="11" font-weight="700">${xml(formatAxis(value, metric))}</text>
+      <text x="${plot.x + plot.width - 8}" y="${gridY + 3}" text-anchor="end" fill="#88AE9B" font-family="Courier New, monospace" font-size="11" font-weight="700">${xml(formatAxis(value, metric))}</text>
     `;
   }).join("");
 
@@ -181,7 +177,7 @@ export async function generateChartCard(
   const currentLine = latestY == null ? "" : `
     <line x1="${plot.x}" y1="${latestY}" x2="${plot.x + plot.width}" y2="${latestY}" stroke="#00E86B" stroke-width="1.5" stroke-dasharray="4 6" opacity="0.9"/>
     <rect x="${plot.x + plot.width - 124}" y="${latestY - 14}" width="124" height="26" rx="8" fill="#00E86B" filter="url(#drop)"/>
-    <text x="${plot.x + plot.width - 10}" y="${latestY + 4}" text-anchor="end" fill="#04180A" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, monospace" font-size="13" font-weight="900">${xml(formatAxis(latest ?? 0, metric))}</text>
+    <text x="${plot.x + plot.width - 10}" y="${latestY + 4}" text-anchor="end" fill="#04180A" font-family="Courier New, monospace" font-size="13" font-weight="900">${xml(formatAxis(latest ?? 0, metric))}</text>
   `;
 
   const change = scan.market.priceChange24h;
@@ -192,12 +188,8 @@ export async function generateChartCard(
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
     <defs>
-      <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
-        <feGaussianBlur stdDeviation="16" result="blur"/>
-        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-      </filter>
       <filter id="softGlow" x="-40%" y="-40%" width="180%" height="180%">
-        <feGaussianBlur stdDeviation="36"/>
+        <feGaussianBlur stdDeviation="32"/>
       </filter>
       <filter id="drop" x="-10%" y="-10%" width="120%" height="130%">
         <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.5"/>
@@ -230,21 +222,21 @@ export async function generateChartCard(
     <g transform="translate(68, 48)">
       <rect x="0" y="0" width="138" height="32" rx="16" fill="#0E2B1B" stroke="#1F5334" stroke-width="1.5"/>
       <circle cx="16" cy="16" r="4.5" fill="#00E86B"/>
-      <text x="28" y="21" fill="#00E86B" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="900" letter-spacing="2.5">KAPISCOUT</text>
+      <text x="28" y="21" fill="#00E86B" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="900" letter-spacing="2.5">KAPISCOUT</text>
 
       <rect x="150" y="0" width="162" height="32" rx="16" fill="#0A1F14" stroke="#17442B" stroke-width="1.2"/>
-      <text x="166" y="21" fill="#7EA590" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="800" letter-spacing="1.5">ROBINHOOD CHAIN</text>
+      <text x="166" y="21" fill="#7EA590" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="800" letter-spacing="1.5">ROBINHOOD CHAIN</text>
 
-      <text x="0" y="76" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="34" font-weight="900">${xml(scan.token.name)} <tspan fill="#00E86B" font-size="24">$${xml(scan.token.symbol)}</tspan></text>
+      <text x="0" y="74" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="900">${xml(scan.token.name)} <tspan fill="#00E86B" font-size="22">$${xml(scan.token.symbol)}</tspan></text>
     </g>
 
     <!-- Top Right Stats -->
     <g transform="translate(1212, 48)">
-      <text x="0" y="22" text-anchor="end" fill="#7E9F8E" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="800" letter-spacing="1.5">
+      <text x="0" y="22" text-anchor="end" fill="#7E9F8E" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="800" letter-spacing="1.5">
         #HOOD · ${xml(scan.market.dexId?.toUpperCase() ?? "UNISWAP V4")} · <tspan fill="#00E86B">${xml(timeframe.toUpperCase())}</tspan> · ${metric === "market_cap" ? "MCAP" : "PRICE"}
       </text>
-      <text x="0" y="66" text-anchor="end" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="34" font-weight="900">${xml(titleValue)}</text>
-      <text x="0" y="90" text-anchor="end" fill="${changeColor}" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="900">
+      <text x="0" y="66" text-anchor="end" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="900">${xml(titleValue)}</text>
+      <text x="0" y="90" text-anchor="end" fill="${changeColor}" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="900">
         ${isUp ? "↗" : "↘"} ${change == null ? "24H N/A" : `${change > 0 ? "+" : ""}${change.toFixed(2)}% · 24H`}
       </text>
     </g>
@@ -260,15 +252,15 @@ export async function generateChartCard(
 
     <!-- Volume Separator -->
     <line x1="${plot.x}" y1="${volume.y - 4}" x2="${plot.x + plot.width}" y2="${volume.y - 4}" stroke="#133623" stroke-width="1" stroke-dasharray="2 3"/>
-    <text x="${plot.x + 16}" y="${volume.y + 16}" fill="#547866" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="900" letter-spacing="1.5">VOLUME</text>
+    <text x="${plot.x + 16}" y="${volume.y + 16}" fill="#547866" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="900" letter-spacing="1.5">VOLUME</text>
 
     <!-- Bottom Telemetry Bar -->
     <g transform="translate(68, 626)">
       <rect x="0" y="0" width="1070" height="54" rx="16" fill="#08180F" stroke="#173B27" stroke-width="1.5"/>
-      <text x="20" y="32" fill="#95B7A6" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="800">
+      <text x="20" y="32" fill="#95B7A6" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="800">
         VOL <tspan fill="#FFFFFF">${xml(formatUsd(scan.market.volume24hUsd))}</tspan>  ·  LP <tspan fill="#FFFFFF">${xml(formatUsd(scan.market.liquidityUsd))}</tspan>  ·  HOLDERS <tspan fill="#FFFFFF">${xml(formatCompactNumber(scan.token.holdersCount))}</tspan>  ·  <tspan fill="#FFD166">${xml(firstLabel)}</tspan>
       </text>
-      <text x="1050" y="32" text-anchor="end" fill="#6B907E" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, monospace" font-size="13">
+      <text x="1050" y="32" text-anchor="end" fill="#6B907E" font-family="Courier New, monospace" font-size="13">
         ${xml(compactAddress(scan.token.address))} · ${xml(formatAge(scan.market.pairCreatedAt))} OLD
       </text>
     </g>
@@ -296,7 +288,7 @@ function marker(call: CallRecord, first: number, last: number, plot: { x: number
     <line x1="${markerX}" y1="${plot.y}" x2="${markerX}" y2="${plot.y + plot.height}" stroke="#FFD166" stroke-width="2" stroke-dasharray="4 6"/>
     <circle cx="${markerX}" cy="${plot.y + 24}" r="6" fill="#FFD166" filter="url(#drop)"/>
     <rect x="${anchor === "end" ? labelX - 170 : labelX - 6}" y="${plot.y + 10}" width="176" height="28" rx="8" fill="#1C1808" stroke="#524314" stroke-width="1.2"/>
-    <text x="${anchor === "end" ? labelX - 10 : labelX + 8}" y="${plot.y + 28}" text-anchor="${anchor}" fill="#FFD166" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="900" letter-spacing="1">
+    <text x="${anchor === "end" ? labelX - 10 : labelX + 8}" y="${plot.y + 28}" text-anchor="${anchor}" fill="#FFD166" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="900" letter-spacing="1">
       ★ ${outside}
     </text>
   `;
@@ -306,30 +298,6 @@ function formatAxis(value: number, metric: ChartMetric): string {
   if (metric === "market_cap") return formatUsd(value);
   if (Math.abs(value) < 0.01) return `$${value.toPrecision(3)}`;
   return `$${value.toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
-}
-
-async function mascot(): Promise<string> {
-  if (mascotDataUrl) return mascotDataUrl;
-  mascotDataUrl = (async () => {
-    const candidatePaths = [
-      resolve(process.cwd(), "new images/new logo.png"),
-      resolve(process.cwd(), "assets/story/new-logo.png"),
-      resolve(process.cwd(), "assets/kapiscout-mascot.png"),
-      resolve(process.cwd(), "assets/kapiscout-logo.png"),
-    ];
-    for (const p of candidatePaths) {
-      if (existsSync(p)) {
-        try {
-          const buffer = await readFile(p);
-          return `data:image/png;base64,${buffer.toString("base64")}`;
-        } catch {
-          // continue
-        }
-      }
-    }
-    return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
-  })();
-  return mascotDataUrl;
 }
 
 function xml(value: unknown): string {
