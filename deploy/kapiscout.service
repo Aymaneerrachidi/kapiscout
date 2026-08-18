@@ -1,0 +1,35 @@
+[Unit]
+Description=Kapiscout Telegram bot
+Documentation=https://github.com/Aymaneerrachidi/kapiscout
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kapiscout
+Group=kapiscout
+WorkingDirectory=/opt/kapiscout
+EnvironmentFile=/opt/kapiscout/.env
+ExecStart=/usr/bin/node dist/src/index.js
+
+# Always come back: on crash, on OOM, and on reboot.
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+
+# Give sharp and the chain client room to work.
+LimitNOFILE=65535
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kapiscout
+
+# Basic hardening. The bot only needs outbound network and its own data dir.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/kapiscout/data
+
+[Install]
+WantedBy=multi-user.target
