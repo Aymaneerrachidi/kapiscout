@@ -804,3 +804,44 @@ a,button{color:inherit;font:inherit}a{text-decoration:none}button{border:0}img{d
     max-height: none;
   }
 }
+
+/* Story beat: source link, name reveal, and the pen sketch plate */
+.story-section.book-spread .story-beat .beat-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 26px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(16,32,22,.3);
+  color: var(--ink);
+  font-size: .82rem;
+  font-weight: 800;
+  letter-spacing: .04em;
+  transition: border-color .25s ease, opacity .25s ease;
+}
+
+.story-section.book-spread .story-beat .beat-link:hover,
+.story-section.book-spread .story-beat .beat-link:focus-visible {
+  border-color: var(--ink);
+  opacity: .72;
+}
+
+.story-section.book-spread .story-beat .beat-word {
+  display: inline-block;
+  padding: 0 .12em;
+  border-bottom: 3px solid var(--green);
+  font-style: normal;
+  font-weight: 900;
+  letter-spacing: -.01em;
+  text-transform: uppercase;
+}
+
+.story-section.book-spread .story-beat-sketch {
+  background: rgba(242,235,217,.9);
+}
+
+.story-section.book-spread .story-beat-sketch img {
+  max-height: 340px;
+  object-position: center bottom;
+  filter: contrast(1.08) saturate(.85);
+}
