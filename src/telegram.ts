@@ -27,7 +27,7 @@ import {
 const timeframes: ChartTimeframe[] = ["auto", "5m", "15m", "1h", "4h", "1d"];
 type UiPromptAction = "scan" | "chart" | "quote" | "holders" | "holderchanges" | "pnl" | "intel" | "devhistory" | "timeline" | "addwallet" | "walletscore" | "alertadd" | "paperstart" | "paperbuy" | "papersell";
 
-export function createTelegramBot(config: AppConfig, store: Store, scanner: TokenScanner, paper:PaperCompetitionService): Bot {
+export async function createTelegramBot(config: AppConfig, store: Store, scanner: TokenScanner, paper:PaperCompetitionService): Promise<Bot> {
   const bot = new Bot(config.telegramToken);
   const charts = new ChartClient("robinhood");
   const refreshCooldowns = new Map<string, number>();
@@ -35,7 +35,7 @@ export function createTelegramBot(config: AppConfig, store: Store, scanner: Toke
   const pendingUiActions = new Map<string, { action: UiPromptAction; promptMessageId: number; expiresAt: number }>();
 
   bot.use(async (ctx, next) => {
-    if (ctx.chat) store.ensureChat(String(ctx.chat.id), "title" in ctx.chat ? ctx.chat.title ?? null : null);
+    if (ctx.chat) await store.ensureChat(String(ctx.chat.id), "title" in ctx.chat ? ctx.chat.title ?? null : null);
     await next();
   });
 
@@ -71,28 +71,28 @@ export function createTelegramBot(config: AppConfig, store: Store, scanner: Toke
 
   bot.command("calls", async (ctx) => {
     if (!ctx.chat) return;
-    const calls = store.listCalls(String(ctx.chat.id), 10);
+    const calls = await store.listCalls(String(ctx.chat.id), 10);
     if (!calls.length) return void await replyPanel(ctx, "🌱", "No calls yet", ["The first pasted contract will start this group’s history."], "Paste a Robinhood Chain CA to begin.");
     await ctx.reply(`<b>🕘 Recent Calls</b>\n└ Latest 10 recorded plays\n\n${calls.map((call, index) => callLine(call, index)).join("\n")}`, { parse_mode: "HTML" });
   });
 
   bot.command(["active", "plays"], async (ctx) => {
     if (!ctx.chat) return;
-    const calls = store.activeCalls(String(ctx.chat.id), 10);
+    const calls = await store.activeCalls(String(ctx.chat.id), 10);
     if (!calls.length) return void await replyPanel(ctx, "📭", "No active plays", ["No recorded call currently has usable pricing."], "Refresh a scan after its pool is indexed.");
     await ctx.reply(`<b>⚡ Active Plays</b>\n└ Ranked by current return\n\n${calls.map((call, index) => callLine(call, index, false)).join("\n")}`, { parse_mode: "HTML" });
   });
 
   bot.command(["lb", "leaderboard"], async (ctx) => {
     if (!ctx.chat) return;
-    const calls = store.leaderboard(String(ctx.chat.id), 10);
+    const calls = await store.leaderboard(String(ctx.chat.id), 10);
     if (!calls.length) return void await replyPanel(ctx, "🏆", "Leaderboard is warming up", ["At least one priced call is required."], "Paste a CA to record the first entry.");
     await ctx.reply(`<b>🏆 ATH Leaderboard</b>\n└ Entry → highest tracked market cap\n\n${calls.map((call, index) => callLine(call, index, true)).join("\n")}`, { parse_mode: "HTML" });
   });
 
   bot.command(["reallb", "realalpha"], async (ctx) => {
     if (!ctx.chat) return;
-    const calls = store.realAlphaLeaderboard(String(ctx.chat.id), 10);
+    const calls = await store.realAlphaLeaderboard(String(ctx.chat.id), 10);
     if (!calls.length) return void await replyPanel(ctx, "💸", "Real Alpha is warming up", ["Calls need both entry and current liquidity."], "The leaderboard uses an estimated $1K executable return.");
     await ctx.reply([
       "<b>💸 Real Alpha leaderboard</b>",
@@ -104,7 +104,7 @@ export function createTelegramBot(config: AppConfig, store: Store, scanner: Toke
 
   bot.command("callers", async (ctx) => {
     if (!ctx.chat) return;
-    const stats = store.callerStats(String(ctx.chat.id));
+    const stats = await store.callerStats(String(ctx.chat.id));
     if (!stats.length) return void await replyPanel(ctx, "👤", "No caller stats yet", ["Caller performance appears after the first priced call."]);
     const lines = stats.slice(0, 10).map((item, index) =>
       `${medal(index)} <b>${escapeHtml(item.username)}</b> · ${item.totalCalls} calls · ${item.winRate.toFixed(0)}% wins · ${item.hits2x}/${item.hits5x}/${item.hits10x} hits · ${item.bestMultiple?.toFixed(2) ?? "—"}x best`,
@@ -115,7 +115,7 @@ export function createTelegramBot(config: AppConfig, store: Store, scanner: Toke
   bot.command("stats", async (ctx) => {
     if (!ctx.chat || !ctx.from) return;
     const query = commandArgument(ctx.message?.text).toLowerCase();
-    const stats = store.callerStats(String(ctx.chat.id));
+    const stats = await store.callerStats(String(ctx.chat.id));
     const item = query
       ? stats.find((candidate) => candidate.username.toLowerCase().replace(/^@/, "") === query.replace(/^@/, ""))
       : stats.find((candidate) => candidate.userId === String(ctx.from!.id));
@@ -133,9 +133,9 @@ export function createTelegramBot(config: AppConfig, store: Store, scanner: Toke
   bot.command(["summary", "groupcard"], async (ctx) => {
     if (!ctx.chat) return;
     const chatId = String(ctx.chat.id);
-    const calls = store.listCalls(chatId, 10_000);
+    const calls = await store.listCalls(chatId, 10_000);
     const title = "title" in ctx.chat ? ctx.chat.title ?? "KapiScout group" : "KapiScout calls";
-    const image = await generateGroupSummaryCard(title, store.callerStats(chatId), calls);
+    const image = await generateGroupSummaryCard(title, await store.callerStats(chatId), calls);
     await ctx.replyWithPhoto(new InputFile(image, "kapiscout-group-report.png"), { caption: `<b>${escapeHtml(title)} · performance report</b>`, parse_mode: "HTML" });
   });
 
@@ -148,7 +148,7 @@ export function createTelegramBot(config: AppConfig, store: Store, scanner: Toke
   bot.command("portfolio", async (ctx) => {
     if (!ctx.chat) return;
     const wallet = extractAddresses(commandArgument(ctx.message?.text))[0];
-    const positions = store.walletPortfolio(String(ctx.chat.id), wallet);
+    const positions = await store.walletPortfolio(String(ctx.chat.id), wallet);
     if (!positions.length) return void await replyPanel(ctx, "📭", "Portfolio is empty", ["KapiScout builds this portfolio from wallet movements it observes after tracking starts."], "Add a wallet with /addwallet, then let the live monitor collect trades.");
     const priced = await Promise.all(positions.slice(0, 10).map(async (position) => {
       const scan = await scanner.scan(position.tokenAddress).catch(() => null);
@@ -164,7 +164,7 @@ export function createTelegramBot(config: AppConfig, store: Store, scanner: Toke
     if (!ctx.chat) return;
     const wallet=extractAddresses(commandArgument(ctx.message?.text))[0];
     if(!wallet) return void await replyPanel(ctx,"🧠","Smart Wallet Score",["<code>/walletscore 0xWallet</code>"],"Scores only activity observed by KapiScout.");
-    const score=store.smartWalletScore(String(ctx.chat.id),wallet);
+    const score=await store.smartWalletScore(String(ctx.chat.id),wallet);
     if(!score) return void await replyPanel(ctx,"📭","Not enough wallet history",["No observed buys or sells exist for this wallet yet."]);
     await ctx.reply([`<b>🧠 ${escapeHtml(score.label)} · SMART SCORE</b>`,`└ <code>${compactAddress(wallet)}</code>`,"",`Score  <b>${score.score}/100 · ${score.grade}</b>`,`├ Trades   ${score.trades}`,`├ Win rate ${score.winRate==null?"Collecting":`${score.winRate.toFixed(0)}%`}`,`├ Volume   ${formatUsd(score.volumeUsd)}`,`└ Realized ${formatSignedUsd(score.realizedPnlUsd)}`,"","<i>Evidence score from observed trade history, not a guarantee of skill.</i>"].join("\n"),{parse_mode:"HTML"});
   });
@@ -172,13 +172,13 @@ export function createTelegramBot(config: AppConfig, store: Store, scanner: Toke
   bot.command(["alert","alerts"], async (ctx) => {
     if(!ctx.chat) return;
     const chatId=String(ctx.chat.id); const argument=commandArgument(ctx.message?.text).trim();
-    if(!argument || argument.toLowerCase()==="list" || ctx.message?.text?.startsWith("/alerts")) return void await sendAlertRules(ctx,store.listAlertRules(chatId));
+    if(!argument || argument.toLowerCase()==="list" || ctx.message?.text?.startsWith("/alerts")) return void await sendAlertRules(ctx,await store.listAlertRules(chatId));
     if(!(await canManageChat(ctx))) return void await replyPanel(ctx,"🔒","Admin setting",["Only group admins can change custom alerts."]);
     const remove=argument.match(/^remove\s+(\d+)$/iu);
-    if(remove){const removed=store.removeAlertRule(chatId,Number(remove[1])); return void await replyPanel(ctx,removed?"✅":"🔎",removed?"Alert removed":"Alert not found",[`Rule #${remove[1]}`]);}
+    if(remove){const removed=await store.removeAlertRule(chatId,Number(remove[1])); return void await replyPanel(ctx,removed?"✅":"🔎",removed?"Alert removed":"Alert not found",[`Rule #${remove[1]}`]);}
     if(!/^add\s+/iu.test(argument)) return void await replyPanel(ctx,"⚡","Custom Alert Builder",["<code>/alert add Name direction=buy minvalue=5k maxmc=100k minlp=10k wallets=2 window=5</code>"],"All filters are optional; use /alerts to list rules.");
     const values=parseRuleValues(argument); const name=argument.replace(/^add\s+/iu,"").split(/\s+[a-z]+=|$/iu)[0]?.trim().slice(0,32)||"Signal";
-    const rule=store.addAlertRule({chatId,name,direction:values.direction,minValueUsd:values.minvalue,minMarketCapUsd:values.minmc,maxMarketCapUsd:values.maxmc||null,minLiquidityUsd:values.minlp,minWallets:Math.max(1,Math.floor(values.wallets)),windowMinutes:Math.max(1,Math.floor(values.window))});
+    const rule=await store.addAlertRule({chatId,name,direction:values.direction,minValueUsd:values.minvalue,minMarketCapUsd:values.minmc,maxMarketCapUsd:values.maxmc||null,minLiquidityUsd:values.minlp,minWallets:Math.max(1,Math.floor(values.wallets)),windowMinutes:Math.max(1,Math.floor(values.window))});
     await replyPanel(ctx,"✅","Custom signal armed",[`<b>#${rule.id} · ${escapeHtml(rule.name)}</b>`,`└ ${rule.direction} · ≥${formatUsd(rule.minValueUsd)} · ${rule.minWallets} wallet${rule.minWallets===1?"":"s"} / ${rule.windowMinutes}m`],"It will fire once per token per time window.");
   });
 
@@ -205,11 +205,11 @@ export function createTelegramBot(config: AppConfig, store: Store, scanner: Toke
 
   bot.command("digest",async(ctx)=>{
     if(!ctx.chat)return; const chatId=String(ctx.chat.id); const arg=commandArgument(ctx.message?.text).toLowerCase().trim();
-    if(!arg||arg==="now")return void await ctx.reply(buildDailyDigest(store,chatId),{parse_mode:"HTML"});
+    if(!arg||arg==="now")return void await ctx.reply(await buildDailyDigest(store,chatId),{parse_mode:"HTML"});
     if(!(await canManageChat(ctx)))return void await replyPanel(ctx,"🔒","Admin setting",["Only group admins can schedule the digest."]);
     const hour=Number(arg.match(/(?:hour\s+)?(\d{1,2})/u)?.[1]);
-    if(arg==="off")store.configureDigest(chatId,false); else if(arg==="on")store.configureDigest(chatId,true); else if(Number.isInteger(hour)&&hour>=0&&hour<=23)store.configureDigest(chatId,true,hour); else return void await replyPanel(ctx,"☀️","Daily Digest",["<code>/digest now|on|off|hour 9</code>"],"Hour uses the bot server timezone.");
-    const s=store.getChatSettings(chatId); await replyPanel(ctx,s.digestEnabled?"🟢":"⚪","Digest updated",[`└ ${s.digestEnabled?`Daily at ${String(s.digestHour).padStart(2,"0")}:00`:`Disabled`}`]);
+    if(arg==="off")await store.configureDigest(chatId,false); else if(arg==="on")await store.configureDigest(chatId,true); else if(Number.isInteger(hour)&&hour>=0&&hour<=23)await store.configureDigest(chatId,true,hour); else return void await replyPanel(ctx,"☀️","Daily Digest",["<code>/digest now|on|off|hour 9</code>"],"Hour uses the bot server timezone.");
+    const s=await store.getChatSettings(chatId); await replyPanel(ctx,s.digestEnabled?"🟢":"⚪","Digest updated",[`└ ${s.digestEnabled?`Daily at ${String(s.digestHour).padStart(2,"0")}:00`:`Disabled`}`]);
   });
 
   bot.command("paperbuy",async(ctx)=>{
@@ -226,20 +226,20 @@ export function createTelegramBot(config: AppConfig, store: Store, scanner: Toke
 
   bot.command(["paper","competition"],async(ctx)=>{if(ctx.chat&&ctx.from)await showPaperMenu(ctx,paper);});
   bot.command("paperlb",async(ctx)=>{if(ctx.chat)await sendPaperLeaderboard(ctx,paper);});
-  bot.command("paperjoin",async(ctx)=>{if(ctx.chat&&ctx.from){await paperAction(ctx,()=>Promise.resolve(paper.join(String(ctx.chat!.id),String(ctx.from!.id),displayName(ctx))));await showPaperMenu(ctx,paper);}});
+  bot.command("paperjoin",async(ctx)=>{if(ctx.chat&&ctx.from){await paperAction(ctx,async ()=>Promise.resolve(await paper.join(String(ctx.chat!.id),String(ctx.from!.id),displayName(ctx))));await showPaperMenu(ctx,paper);}});
 
   bot.command("bridgealerts",async(ctx)=>{
     if(!ctx.chat||!(await canManageChat(ctx)))return; const arg=commandArgument(ctx.message?.text).toLowerCase(); if(!["on","off"].includes(arg))return void await replyPanel(ctx,"🌉","Bridge Radar",["<code>/bridgealerts on|off</code>"]);
-    store.configureBridge(String(ctx.chat.id),arg==="on"); await replyPanel(ctx,arg==="on"?"🟢":"⚪","Bridge Radar updated",[`└ <b>${arg.toUpperCase()}</b>`]);
+    await store.configureBridge(String(ctx.chat.id),arg==="on"); await replyPanel(ctx,arg==="on"?"🟢":"⚪","Bridge Radar updated",[`└ <b>${arg.toUpperCase()}</b>`]);
   });
 
   bot.command("bridgemin",async(ctx)=>{
     if(!ctx.chat||!(await canManageChat(ctx)))return; const value=parseCompactUsd(commandArgument(ctx.message?.text)); if(value==null)return void await replyPanel(ctx,"🌉","Bridge minimum",["<code>/bridgemin 25k</code>"]);
-    const current=store.getChatSettings(String(ctx.chat.id)); store.configureBridge(String(ctx.chat.id),current.bridgeAlerts,value); await replyPanel(ctx,"✅","Bridge minimum updated",[`└ <b>${formatUsd(value)}</b>`]);
+    const current=await store.getChatSettings(String(ctx.chat.id)); await store.configureBridge(String(ctx.chat.id),current.bridgeAlerts,value); await replyPanel(ctx,"✅","Bridge minimum updated",[`└ <b>${formatUsd(value)}</b>`]);
   });
 
   bot.command("bridgeflow",async(ctx)=>{
-    const flows=store.recentBridgeFlows(Date.now()-24*60*60_000,10); if(!flows.length)return void await replyPanel(ctx,"🌉","No recent bridge flow",["No chain-native ETH bridge transaction has been observed in the last 24h."]);
+    const flows=await store.recentBridgeFlows(Date.now()-24*60*60_000,10); if(!flows.length)return void await replyPanel(ctx,"🌉","No recent bridge flow",["No chain-native ETH bridge transaction has been observed in the last 24h."]);
     await ctx.reply(["<b>🌉 ROBINHOOD BRIDGE TAPE · 24H</b>","",...flows.map((flow,index)=>`${index===flows.length-1?"└":"├"} ${flow.direction==="IN"?"🟢 IN":"🟠 OUT"} · <b>${formatUsd(flow.valueUsd)}</b> · ${flow.amount.toFixed(3)} ETH · <code>${compactAddress(flow.wallet)}</code>`)].join("\n"),{parse_mode:"HTML"});
   });
 
@@ -248,12 +248,12 @@ export function createTelegramBot(config: AppConfig, store: Store, scanner: Toke
     const argument = commandArgument(ctx.message?.text);
     const address = extractAddresses(argument)[0];
     if (!address) return void await replyPanel(ctx, "🔔", "Track a wallet", ["<code>/addwallet 0xAddress Name</code>"], "Example · /addwallet 0x… Smart Ape");
-    if (store.countCustomWallets(String(ctx.chat.id)) >= config.maxWalletsPerChat && !store.findWallets(address).some((item) => item.chatId === String(ctx.chat!.id))) {
+    if (await store.countCustomWallets(String(ctx.chat.id)) >= config.maxWalletsPerChat && !(await store.findWallets(address)).some((item) => item.chatId === String(ctx.chat!.id))) {
       return void await replyPanel(ctx, "⚠️", "Wallet limit reached", [`This chat can track <b>${config.maxWalletsPerChat}</b> custom wallets.`], "Remove one with /removewallet, then try again.");
     }
     const rawLabel = argument.replace(/0x[a-fA-F0-9]{40}/u, "").trim();
     const label = rawLabel.slice(0, 48) || compactAddress(address);
-    store.addWallet(String(ctx.chat.id), String(ctx.from.id), address, label);
+    await store.addWallet(String(ctx.chat.id), String(ctx.from.id), address, label);
     await replyPanel(ctx, "✅", "Wallet tracking enabled", [
       `├ Name     <b>${escapeHtml(label)}</b>`,
       `└ Address  <code>${address}</code>`,
@@ -266,12 +266,12 @@ export function createTelegramBot(config: AppConfig, store: Store, scanner: Toke
     const address = extractAddresses(argument)[0];
     const rawLabel = address ? argument.replace(/0x[a-fA-F0-9]{40}/u, "").trim() : "";
     if (!address || !rawLabel) return void await replyPanel(ctx, "✏️", "Name a wallet", ["<code>/namewallet 0xAddress New Name</code>"], "Names can contain spaces and use up to 48 characters.");
-    const tracked = store.findWallets(address).find((item) => item.chatId === String(ctx.chat!.id));
+    const tracked = (await store.findWallets(address)).find((item) => item.chatId === String(ctx.chat!.id));
     if (!tracked) return void await replyPanel(ctx, "🔎", "Wallet not found", ["That address is not a custom wallet in this chat."], "Add it first with /addwallet.");
     const isOwner = tracked.telegramUserId === String(ctx.from.id);
     if (!isOwner && !(await canManageChat(ctx))) return void await replyPanel(ctx, "🔒", "Rename not allowed", ["Only the person who added this wallet or a group admin can rename it."]);
     const label = rawLabel.slice(0, 48);
-    store.renameWallet(String(ctx.chat.id), address, label);
+    await store.renameWallet(String(ctx.chat.id), address, label);
     await replyPanel(ctx, "✅", "Wallet renamed", [
       `├ Name     <b>${escapeHtml(label)}</b>`,
       `└ Address  <code>${address}</code>`,
@@ -282,7 +282,7 @@ export function createTelegramBot(config: AppConfig, store: Store, scanner: Toke
     if (!ctx.chat) return;
     const address = extractAddresses(commandArgument(ctx.message?.text))[0];
     if (!address) return void await replyPanel(ctx, "🗑", "Remove a wallet", ["<code>/removewallet 0xAddress</code>"]);
-    const removed = store.removeWallet(String(ctx.chat.id), address);
+    const removed = await store.removeWallet(String(ctx.chat.id), address);
     await replyPanel(ctx, removed ? "✅" : "🔎", removed ? "Wallet removed" : "Wallet not found", [
       removed ? `<code>${address}</code>` : "That address is not tracked in this chat.",
     ]);
@@ -290,7 +290,7 @@ export function createTelegramBot(config: AppConfig, store: Store, scanner: Toke
 
   bot.command("wallets", async (ctx) => {
     if (!ctx.chat) return;
-    const wallets = store.listWallets(String(ctx.chat.id));
+    const wallets = await store.listWallets(String(ctx.chat.id));
     if (!wallets.length) return void await replyPanel(ctx, "🔕", "No tracked wallets", ["Add one with <code>/addwallet 0xAddress Name</code>."]);
     await ctx.reply([
       "<b>🔔 Tracked Wallets</b>",
@@ -314,7 +314,7 @@ export function createTelegramBot(config: AppConfig, store: Store, scanner: Toke
       if (!ctx.chat || !(await canManageChat(ctx))) return void await replyPanel(ctx, "🔒", "Admin setting", ["Only group admins can change this option."]);
       const value = commandArgument(ctx.message?.text).toLowerCase();
       if (value !== "on" && value !== "off") return void await replyPanel(ctx, "⚙️", "Choose a state", [`<code>/${command} on|off</code>`]);
-      store.updateChatSetting(String(ctx.chat.id), field, value === "on");
+      await store.updateChatSetting(String(ctx.chat.id), field, value === "on");
       await replyPanel(ctx, value === "on" ? "🟢" : "⚪️", "Setting updated", [`├ Option  <b>${escapeHtml(command)}</b>`, `└ State   <b>${value.toUpperCase()}</b>`]);
     });
   }
@@ -323,17 +323,17 @@ export function createTelegramBot(config: AppConfig, store: Store, scanner: Toke
     if (!ctx.chat || !(await canManageChat(ctx))) return void await replyPanel(ctx, "🔒", "Admin setting", ["Only group admins can change this option."]);
     const value = parseCompactUsd(commandArgument(ctx.message?.text));
     if (value == null) return void await replyPanel(ctx, "⚙️", "Minimum market cap", ["<code>/minmc 25k</code> or <code>/minmc off</code>"]);
-    store.updateMinMarketCap(String(ctx.chat.id), value);
+    await store.updateMinMarketCap(String(ctx.chat.id), value);
     await replyPanel(ctx, value ? "✅" : "⚪️", "Minimum market cap updated", [`└ <b>${value ? formatUsd(value) : "Disabled"}</b>`]);
   });
 
   bot.command("chartmode", async (ctx) => {
     if (!ctx.chat || !(await canManageChat(ctx))) return void await replyPanel(ctx, "🔒", "Admin setting", ["Only group admins can change this option."]);
     const argument = commandArgument(ctx.message?.text).toLowerCase();
-    const settings = store.getChatSettings(String(ctx.chat.id));
+    const settings = await store.getChatSettings(String(ctx.chat.id));
     const metric: ChartMetric | null = argument === "price" ? "price" : ["mc", "marketcap", "market_cap"].includes(argument) ? "market_cap" : null;
     if (!metric) return void await replyPanel(ctx, "📊", "Chart mode", ["<code>/chartmode mc|price</code>"]);
-    store.updateChartPreference(String(ctx.chat.id), metric, settings.chartTimeframe);
+    await store.updateChartPreference(String(ctx.chat.id), metric, settings.chartTimeframe);
     await replyPanel(ctx, "✅", "Chart mode updated", [`└ <b>${metric === "market_cap" ? "Market cap" : "Price"}</b>`]);
   });
 
@@ -341,14 +341,14 @@ export function createTelegramBot(config: AppConfig, store: Store, scanner: Toke
     if (!ctx.chat || !(await canManageChat(ctx))) return void await replyPanel(ctx, "🔒", "Admin setting", ["Only group admins can change this option."]);
     const timeframe = parseTimeframe(commandArgument(ctx.message?.text));
     if (!timeframe) return void await replyPanel(ctx, "⏱", "Chart timeframe", ["<code>/timeframe auto|5m|15m|1h|4h|1d</code>"]);
-    const settings = store.getChatSettings(String(ctx.chat.id));
-    store.updateChartPreference(String(ctx.chat.id), settings.chartMetric, timeframe);
+    const settings = await store.getChatSettings(String(ctx.chat.id));
+    await store.updateChartPreference(String(ctx.chat.id), settings.chartMetric, timeframe);
     await replyPanel(ctx, "✅", "Timeframe updated", [`└ <b>${timeframe.toUpperCase()}</b>`]);
   });
 
   bot.command("settings", async (ctx) => {
     if (!ctx.chat) return;
-    await ctx.reply(settingsText(store.getChatSettings(String(ctx.chat.id))), { parse_mode: "HTML" });
+    await ctx.reply(settingsText(await store.getChatSettings(String(ctx.chat.id))), { parse_mode: "HTML" });
   });
 
   bot.on("callback_query:data", async (ctx) => {
@@ -363,7 +363,7 @@ export function createTelegramBot(config: AppConfig, store: Store, scanner: Toke
     if (!address) return void await ctx.answerCallbackQuery({ text: "Invalid token." });
     if (action === "wn") {
       if (!ctx.chat || !ctx.from) return void await ctx.answerCallbackQuery({ text: "Open this alert inside its chat." });
-      const tracked = store.findWallets(address).find((item) => item.chatId === String(ctx.chat!.id));
+      const tracked = (await store.findWallets(address)).find((item) => item.chatId === String(ctx.chat!.id));
       if (!tracked) return void await ctx.answerCallbackQuery({ text: "This is not a custom wallet in this chat.", show_alert: true });
       const isOwner = tracked.telegramUserId === String(ctx.from.id);
       if (!isOwner && !(await canManageChat(ctx))) return void await ctx.answerCallbackQuery({ text: "Only its owner or an admin can rename it.", show_alert: true });
@@ -447,7 +447,7 @@ export function createTelegramBot(config: AppConfig, store: Store, scanner: Toke
       pendingWalletNames.delete(pendingKey!);
       const label = text.replace(/\s+/gu, " ").trim().slice(0, 48);
       if (!label || label.startsWith("/")) return void await replyPanel(ctx, "⚠️", "Name not changed", ["Send a plain name between 1 and 48 characters."]);
-      store.renameWallet(String(ctx.chat!.id), pending.address, label);
+      await store.renameWallet(String(ctx.chat!.id), pending.address, label);
       await replyPanel(ctx, "✅", "Wallet renamed", [
         `├ Name     <b>${escapeHtml(label)}</b>`,
         `└ Address  <code>${pending.address}</code>`,
@@ -487,18 +487,18 @@ async function handleUiCallback(ctx:Context, action:string, store:Store, scanner
   if(action.startsWith("ask:"))return void await requestUiInput(ctx,action.slice(4) as UiPromptAction,pending);
   if(action.startsWith("toggle:")){
     if(!ctx.chat||!(await canManageChat(ctx)))return void await replyPanel(ctx,"🔒","Admin setting",["Only group admins can change this option."]);
-    const chatId=String(ctx.chat.id);const key=action.slice(7);const settings=store.getChatSettings(chatId);
+    const chatId=String(ctx.chat.id);const key=action.slice(7);const settings=await store.getChatSettings(chatId);
     const settingMap={show_chart:["show_chart",settings.showChart],kol_alerts:["kol_alerts",settings.kolAlerts],milestone_alerts:["milestone_alerts",settings.milestoneAlerts],dev_alerts:["dev_alerts",settings.devAlerts],whale_alerts:["whale_alerts",settings.whaleAlerts]} as const;
-    if(key==="digest")store.configureDigest(chatId,!settings.digestEnabled);
-    else if(key==="bridge")store.configureBridge(chatId,!settings.bridgeAlerts);
-    else {const entry=settingMap[key as keyof typeof settingMap];if(entry)store.updateChatSetting(chatId,entry[0],!entry[1]);}
-    return void await showUiPanel(ctx,settingsPanel(store.getChatSettings(chatId)),settingsKeyboard(store.getChatSettings(chatId)));
+    if(key==="digest")await store.configureDigest(chatId,!settings.digestEnabled);
+    else if(key==="bridge")await store.configureBridge(chatId,!settings.bridgeAlerts);
+    else {const entry=settingMap[key as keyof typeof settingMap];if(entry)await store.updateChatSetting(chatId,entry[0],!entry[1]);}
+    return void await showUiPanel(ctx,settingsPanel(await store.getChatSettings(chatId)),settingsKeyboard(await store.getChatSettings(chatId)));
   }
   if(!ctx.chat)return;
   const chatId=String(ctx.chat.id);
   if(action==="paper_menu")return void await showPaperMenu(ctx,paper);
   if(action==="paper_join"&&ctx.from){
-    const joined=await paperAction(ctx,()=>Promise.resolve(paper.join(chatId,String(ctx.from!.id),displayName(ctx))));
+    const joined=await paperAction(ctx,async ()=>Promise.resolve(await paper.join(chatId,String(ctx.from!.id),displayName(ctx))));
     if(joined)await showPaperMenu(ctx,paper);
     return;
   }
@@ -519,7 +519,7 @@ async function handleUiCallback(ctx:Context, action:string, store:Store, scanner
   if(action==="paper_history"&&ctx.from)return void await sendPaperHistory(ctx,paper);
   if(action==="paper_end"){
     if(!(await canManageChat(ctx)))return void await replyPanel(ctx,"🔒","Admin action",["Only group admins can end the competition."]);
-    const ended=await paperAction(ctx,()=>paper.end(chatId));
+    const ended=await paperAction(ctx,async ()=>await paper.end(chatId));
     if(ended)await sendPaperLeaderboard(ctx,paper,Boolean(ctx.callbackQuery?.message));
     return;
   }
@@ -528,17 +528,17 @@ async function handleUiCallback(ctx:Context, action:string, store:Store, scanner
   if(action==="signals_menu")return void await showUiPanel(ctx,"<b>⚡ CUSTOM SIGNALS</b>\n└ Build smart-money alerts with plain guided input.",new InlineKeyboard().text("➕ Create Signal","ui:ask:alertadd").text("📋 My Signals","ui:alerts").row().text("👀 Wallets","ui:wallets_menu").text("‹ Home","ui:home"));
   if(action==="paper_menu")return void await showUiPanel(ctx,"<b>🧾 PAPER TRADING</b>\n└ Test the thesis with live prices and zero real funds.",new InlineKeyboard().text("🟢 Paper Buy","ui:ask:paperbuy").text("🔴 Paper Sell","ui:ask:papersell").row().text("💼 My Portfolio","ui:paper").text("‹ Home","ui:home"));
   if(action==="calls_menu")return void await showUiPanel(ctx,"<b>🎯 CALL INTELLIGENCE</b>\n└ Group performance, active plays and proof-backed rankings.",new InlineKeyboard().text("🕘 Recent","ui:calls").text("⚡ Active","ui:active").row().text("🏆 Leaderboard","ui:leaderboard").text("👤 Callers","ui:callers").row().text("📈 Token PNL","ui:ask:pnl").text("‹ Home","ui:home"));
-  if(action==="bridge_menu")return void await showUiPanel(ctx,"<b>🌉 BRIDGE RADAR</b>\n└ Follow chain-native ETH flow into and out of Robinhood.",new InlineKeyboard().text("📡 24H Flow","ui:bridgeflow").text(`${store.getChatSettings(chatId).bridgeAlerts?"🟢":"⚪"} Live Alerts`,`ui:toggle:bridge`).row().text("‹ Home","ui:home"));
-  if(action==="digest_menu")return void await showUiPanel(ctx,"<b>☀️ DAILY EDGE</b>\n└ One clean recap of calls, wallet flow and group momentum.",new InlineKeyboard().text("▶ Generate Now","ui:digestnow").text(`${store.getChatSettings(chatId).digestEnabled?"🟢":"⚪"} Daily Delivery`,`ui:toggle:digest`).row().text("‹ Home","ui:home"));
-  if(action==="settings")return void await showUiPanel(ctx,settingsPanel(store.getChatSettings(chatId)),settingsKeyboard(store.getChatSettings(chatId)));
+  if(action==="bridge_menu")return void await showUiPanel(ctx,"<b>🌉 BRIDGE RADAR</b>\n└ Follow chain-native ETH flow into and out of Robinhood.",new InlineKeyboard().text("📡 24H Flow","ui:bridgeflow").text(`${(await store.getChatSettings(chatId)).bridgeAlerts?"🟢":"⚪"} Live Alerts`,`ui:toggle:bridge`).row().text("‹ Home","ui:home"));
+  if(action==="digest_menu")return void await showUiPanel(ctx,"<b>☀️ DAILY EDGE</b>\n└ One clean recap of calls, wallet flow and group momentum.",new InlineKeyboard().text("▶ Generate Now","ui:digestnow").text(`${(await store.getChatSettings(chatId)).digestEnabled?"🟢":"⚪"} Daily Delivery`,`ui:toggle:digest`).row().text("‹ Home","ui:home"));
+  if(action==="settings")return void await showUiPanel(ctx,settingsPanel(await store.getChatSettings(chatId)),settingsKeyboard(await store.getChatSettings(chatId)));
   if(action==="guide")return void await showUiPanel(ctx,"<b>❔ HOW KAPISCOUT WORKS</b>\n\n1. Tap a tool.\n2. Reply with the requested CA, wallet or amount.\n3. Get a clean result with action buttons.\n\n<i>You can still paste a CA directly for the fastest scan.</i>",new InlineKeyboard().text("🔎 Start a Scan","ui:ask:scan").row().text("‹ Home","ui:home"));
   if(action==="walletlist"){
-    const wallets=store.listWallets(chatId);return void await ctx.reply(wallets.length?["<b>👀 TRACKED WALLETS</b>","",...wallets.map((item,index)=>`${index===wallets.length-1?"└":"├"} ${item.isKol?"◆":"◇"} <b>${escapeHtml(item.label)}</b> · <code>${compactAddress(item.address)}</code>`)].join("\n"):"<b>📭 No wallets yet</b>\n\nTap <b>Track Wallet</b> to add one.",{parse_mode:"HTML",reply_markup:new InlineKeyboard().text("➕ Track Wallet","ui:ask:addwallet").text("‹ Wallets","ui:wallets_menu")});
+    const wallets=await store.listWallets(chatId);return void await ctx.reply(wallets.length?["<b>👀 TRACKED WALLETS</b>","",...wallets.map((item,index)=>`${index===wallets.length-1?"└":"├"} ${item.isKol?"◆":"◇"} <b>${escapeHtml(item.label)}</b> · <code>${compactAddress(item.address)}</code>`)].join("\n"):"<b>📭 No wallets yet</b>\n\nTap <b>Track Wallet</b> to add one.",{parse_mode:"HTML",reply_markup:new InlineKeyboard().text("➕ Track Wallet","ui:ask:addwallet").text("‹ Wallets","ui:wallets_menu")});
   }
-  if(action==="alerts")return void await sendAlertRules(ctx,store.listAlertRules(chatId));
+  if(action==="alerts")return void await sendAlertRules(ctx,await store.listAlertRules(chatId));
   if(action==="portfolio")return void await sendWalletPortfolio(ctx,null,store,scanner);
   if(action==="paper"&&ctx.from)return void await sendPaperPortfolio(ctx,paper);
-  if(action==="digestnow")return void await ctx.reply(buildDailyDigest(store,chatId),{parse_mode:"HTML",reply_markup:new InlineKeyboard().text("‹ Daily Edge","ui:digest_menu")});
+  if(action==="digestnow")return void await ctx.reply(await buildDailyDigest(store,chatId),{parse_mode:"HTML",reply_markup:new InlineKeyboard().text("‹ Daily Edge","ui:digest_menu")});
   if(action==="bridgeflow")return void await sendBridgeFlow(ctx,store);
   if(["calls","active","leaderboard","callers"].includes(action))return void await sendUiCallList(ctx,action,store);
   void charts;void config;
@@ -578,8 +578,8 @@ async function runUiPromptAction(ctx:Context,action:UiPromptAction,text:string,s
     const balance=parseCompactUsd(rawBalance||"10000")??10_000;
     const days=Number.parseFloat(rawDays||"7");
     if(!Number.isFinite(balance)||balance<100||!Number.isFinite(days)||days<1||days>90)return void await replyPanel(ctx,"⚠️","Competition setup invalid",["Use: <code>Name | starting balance | days</code>","Example: <code>Kapi Cup | 10k | 7</code>"]);
-    const created=await paperAction(ctx,()=>Promise.resolve(paper.create(chatId,name,balance,days,String(ctx.from!.id))));
-    if(created){paper.join(chatId,String(ctx.from.id),displayName(ctx));await showPaperMenu(ctx,paper);}
+    const created=await paperAction(ctx,async ()=>Promise.resolve(await paper.create(chatId,name,balance,days,String(ctx.from!.id))));
+    if(created){await paper.join(chatId,String(ctx.from.id),displayName(ctx));await showPaperMenu(ctx,paper);}
     return;
   }
   const needAddress=()=>replyPanel(ctx,"⚠️","Address missing",["Send a complete <code>0x…</code> address."],"Tap the menu action again to retry.");
@@ -595,15 +595,15 @@ async function runUiPromptAction(ctx:Context,action:UiPromptAction,text:string,s
   if(action==="intel")return void await sendReality(ctx,address!,store,scanner,config);
   if(action==="devhistory")return void await sendDeployerHistory(ctx,address!,scanner);
   if(action==="timeline")return void await sendTimeline(ctx,address!,store);
-  if(action==="walletscore"){const score=store.smartWalletScore(chatId,address!);if(!score)return void await replyPanel(ctx,"📭","Not enough history",["No observed buys or sells exist for this wallet yet."]);return void await ctx.reply([`<b>🧠 ${escapeHtml(score.label)} · ${score.grade}</b>`,`Score <b>${score.score}/100</b> · ${score.trades} trades · ${score.winRate==null?"collecting":`${score.winRate.toFixed(0)}% wins`}`,`Observed PNL <b>${formatSignedUsd(score.realizedPnlUsd)}</b>`].join("\n"),{parse_mode:"HTML"});}
+  if(action==="walletscore"){const score=await store.smartWalletScore(chatId,address!);if(!score)return void await replyPanel(ctx,"📭","Not enough history",["No observed buys or sells exist for this wallet yet."]);return void await ctx.reply([`<b>🧠 ${escapeHtml(score.label)} · ${score.grade}</b>`,`Score <b>${score.score}/100</b> · ${score.trades} trades · ${score.winRate==null?"collecting":`${score.winRate.toFixed(0)}% wins`}`,`Observed PNL <b>${formatSignedUsd(score.realizedPnlUsd)}</b>`].join("\n"),{parse_mode:"HTML"});}
   if(action==="addwallet"){
     const rawLabel=text.replace(/0x[a-fA-F0-9]{40}/u,"").trim();const label=rawLabel.slice(0,48)||compactAddress(address!);
-    if(store.countCustomWallets(chatId)>=config.maxWalletsPerChat&&!store.findWallets(address!).some((item)=>item.chatId===chatId))return void await replyPanel(ctx,"⚠️","Wallet limit reached",[`This chat can track ${config.maxWalletsPerChat} wallets.`]);
-    store.addWallet(chatId,String(ctx.from.id),address!,label);return void await replyPanel(ctx,"✅","Wallet tracking enabled",[`<b>${escapeHtml(label)}</b>`,`<code>${address}</code>`],"Future activity will arrive as visual alert cards.");
+    if(await store.countCustomWallets(chatId)>=config.maxWalletsPerChat&&!(await store.findWallets(address!)).some((item)=>item.chatId===chatId))return void await replyPanel(ctx,"⚠️","Wallet limit reached",[`This chat can track ${config.maxWalletsPerChat} wallets.`]);
+    await store.addWallet(chatId,String(ctx.from.id),address!,label);return void await replyPanel(ctx,"✅","Wallet tracking enabled",[`<b>${escapeHtml(label)}</b>`,`<code>${address}</code>`],"Future activity will arrive as visual alert cards.");
   }
   if(action==="alertadd"){
     if(!(await canManageChat(ctx)))return void await replyPanel(ctx,"🔒","Admin setting",["Only group admins can create signals."]);
-    const argument=`add ${text}`;const values=parseRuleValues(argument);const name=text.split(/\s+[a-z]+=|$/iu)[0]?.trim().slice(0,32)||"Signal";const rule=store.addAlertRule({chatId,name,direction:values.direction,minValueUsd:values.minvalue,minMarketCapUsd:values.minmc,maxMarketCapUsd:values.maxmc||null,minLiquidityUsd:values.minlp,minWallets:Math.max(1,Math.floor(values.wallets)),windowMinutes:Math.max(1,Math.floor(values.window))});return void await replyPanel(ctx,"✅","Signal armed",[`<b>#${rule.id} · ${escapeHtml(rule.name)}</b>`,`${rule.direction} · ≥${formatUsd(rule.minValueUsd)} · ${rule.minWallets} wallet${rule.minWallets===1?"":"s"}/${rule.windowMinutes}m`]);
+    const argument=`add ${text}`;const values=parseRuleValues(argument);const name=text.split(/\s+[a-z]+=|$/iu)[0]?.trim().slice(0,32)||"Signal";const rule=await store.addAlertRule({chatId,name,direction:values.direction,minValueUsd:values.minvalue,minMarketCapUsd:values.minmc,maxMarketCapUsd:values.maxmc||null,minLiquidityUsd:values.minlp,minWallets:Math.max(1,Math.floor(values.wallets)),windowMinutes:Math.max(1,Math.floor(values.window))});return void await replyPanel(ctx,"✅","Signal armed",[`<b>#${rule.id} · ${escapeHtml(rule.name)}</b>`,`${rule.direction} · ≥${formatUsd(rule.minValueUsd)} · ${rule.minWallets} wallet${rule.minWallets===1?"":"s"}/${rule.windowMinutes}m`]);
   }
   if(action==="paperbuy"){const usd=parseCompactUsd(text.replace(/0x[a-fA-F0-9]{40}/u,"").trim());if(!usd||usd<=0)return void await replyPanel(ctx,"⚠️","Amount missing",["Example: <code>0x… 100</code>"]);return void await paperBuy(ctx,address!,usd,paper,store);}
   if(action==="papersell"){const rest=text.replace(/0x[a-fA-F0-9]{40}/u,"").trim().toLowerCase();const fraction=rest==="all"?1:Number.parseFloat(rest)/100;if(!Number.isFinite(fraction)||fraction<=0)return void await replyPanel(ctx,"⚠️","Invalid size",["Use a percentage or all."]);return void await paperSell(ctx,address!,fraction,paper,store);}
@@ -611,25 +611,25 @@ async function runUiPromptAction(ctx:Context,action:UiPromptAction,text:string,s
 
 async function sendUiCallList(ctx:Context,action:string,store:Store):Promise<void>{
   if(!ctx.chat)return;const chatId=String(ctx.chat.id);
-  if(action==="callers"){const stats=store.callerStats(chatId);return void await ctx.reply(stats.length?["<b>👤 CALLER LEADERBOARD</b>","",...stats.slice(0,10).map((item,index)=>`${medal(index)} <b>${escapeHtml(item.username)}</b> · ${item.winRate.toFixed(0)}% wins · ${item.bestMultiple?.toFixed(2)??"—"}x best`)].join("\n"):"<b>📭 No caller history yet</b>",{parse_mode:"HTML"});}
-  const calls=action==="calls"?store.listCalls(chatId,10):action==="active"?store.activeCalls(chatId,10):store.leaderboard(chatId,10);const title=action==="calls"?"RECENT CALLS":action==="active"?"ACTIVE PLAYS":"ATH LEADERBOARD";
+  if(action==="callers"){const stats=await store.callerStats(chatId);return void await ctx.reply(stats.length?["<b>👤 CALLER LEADERBOARD</b>","",...stats.slice(0,10).map((item,index)=>`${medal(index)} <b>${escapeHtml(item.username)}</b> · ${item.winRate.toFixed(0)}% wins · ${item.bestMultiple?.toFixed(2)??"—"}x best`)].join("\n"):"<b>📭 No caller history yet</b>",{parse_mode:"HTML"});}
+  const calls=action==="calls"?await store.listCalls(chatId,10):action==="active"?await store.activeCalls(chatId,10):await store.leaderboard(chatId,10);const title=action==="calls"?"RECENT CALLS":action==="active"?"ACTIVE PLAYS":"ATH LEADERBOARD";
   await ctx.reply(calls.length?[`<b>🎯 ${title}</b>`,"",...calls.map((call,index)=>callLine(call,index,action==="leaderboard"))].join("\n"):`<b>📭 ${title}</b>\n\nNothing to show yet.`,{parse_mode:"HTML"});
 }
 
 async function sendWalletPortfolio(ctx:Context,wallet:Address|null,store:Store,scanner:TokenScanner):Promise<void>{
-  if(!ctx.chat)return;const positions=store.walletPortfolio(String(ctx.chat.id),wallet??undefined);if(!positions.length)return void await replyPanel(ctx,"📭","Portfolio is empty",["It starts building when a tracked wallet makes a trade."]);
+  if(!ctx.chat)return;const positions=await store.walletPortfolio(String(ctx.chat.id),wallet??undefined);if(!positions.length)return void await replyPanel(ctx,"📭","Portfolio is empty",["It starts building when a tracked wallet makes a trade."]);
   const priced=await Promise.all(positions.slice(0,10).map(async(position)=>{const scan=await scanner.scan(position.tokenAddress).catch(()=>null);const price=scan?.market.priceUsd??position.lastPriceUsd;return{...position,value:price==null?null:position.tokenAmount*price,pnl:price==null?null:position.tokenAmount*price-position.costBasisUsd+position.realizedUsd};}));
   await ctx.reply(["<b>💼 OBSERVED PORTFOLIO</b>",wallet?`└ <code>${compactAddress(wallet)}</code>`:"└ All tracked wallets","",...priced.map((item,index)=>`${index===priced.length-1?"└":"├"} <b>$${escapeHtml(item.symbol)}</b> · ${formatUsd(item.value)} · ${formatSignedUsd(item.pnl)}`),"",`Total <b>${formatUsd(priced.reduce((sum,item)=>sum+(item.value??0),0))}</b>`].join("\n"),{parse_mode:"HTML"});
 }
 
 async function sendBridgeFlow(ctx:Context,store:Store):Promise<void>{
-  const flows=store.recentBridgeFlows(Date.now()-24*60*60_000,10);if(!flows.length)return void await replyPanel(ctx,"🌉","No recent bridge flow",["No chain-native ETH bridge transaction was observed in the last 24h."]);
+  const flows=await store.recentBridgeFlows(Date.now()-24*60*60_000,10);if(!flows.length)return void await replyPanel(ctx,"🌉","No recent bridge flow",["No chain-native ETH bridge transaction was observed in the last 24h."]);
   await ctx.reply(["<b>🌉 ROBINHOOD BRIDGE TAPE</b>","",...flows.map((flow,index)=>`${index===flows.length-1?"└":"├"} ${flow.direction==="IN"?"🟢 IN":"🟠 OUT"} · <b>${formatUsd(flow.valueUsd)}</b> · ${flow.amount.toFixed(3)} ETH`)].join("\n"),{parse_mode:"HTML"});
 }
 
 async function scanAndReply(ctx: Context, address: Address, store: Store, scanner: TokenScanner, charts: ChartClient, config: AppConfig, compact = false, detailed = false): Promise<void> {
   if (!ctx.chat || !ctx.from) return;
-  const settings = store.getChatSettings(String(ctx.chat.id));
+  const settings = await store.getChatSettings(String(ctx.chat.id));
   if (!settings.contractEnabled) return;
   if (settings.adminOnly && !(await canManageChat(ctx))) return void await replyPanel(ctx, "🔒", "Admin-only scanning", ["This group only allows admins to scan contracts."]);
   const chartLoad = settings.showChart ? within(charts.candlesForToken(address, settings.chartTimeframe), 6_000, null) : Promise.resolve(null);
@@ -641,7 +641,7 @@ async function scanAndReply(ctx: Context, address: Address, store: Store, scanne
   if (settings.minMarketCapUsd > 0 && (marketCap == null || marketCap < settings.minMarketCapUsd)) {
     return void await replyPanel(ctx, "↘️", "Scan filtered", [`Market cap is below this group’s <b>${formatUsd(settings.minMarketCapUsd)}</b> minimum.`]);
   }
-  const recorded = store.recordCall({
+  const recorded = await store.recordCall({
     chatId: String(ctx.chat.id), messageId: ctx.message?.message_id ?? 0,
     userId: String(ctx.from.id), username: displayName(ctx), scan,
   });
@@ -659,14 +659,14 @@ async function refreshMessage(ctx: Context, address: Address, metric: ChartMetri
   const scan = await scanner.refreshMarket(address);
   const chartResult = await chartLoad;
   applyChartFallback(scan, chartResult);
-  store.syncSecurityWatchers(String(ctx.chat.id), scan);
-  const call = store.getCall(String(ctx.chat.id), address);
+  await store.syncSecurityWatchers(String(ctx.chat.id), scan);
+  const call = await store.getCall(String(ctx.chat.id), address);
   const currentMc = scan.market.marketCapUsd ?? scan.market.fdvUsd;
-  const updated = call ? store.updateCallMarket(call.id, {
+  const updated = call ? await store.updateCallMarket(call.id, {
     priceUsd: scan.market.priceUsd, marketCapUsd: currentMc, liquidityUsd: scan.market.liquidityUsd,
     dexPaid: scan.market.dexPaid, incrementScan: true,
   }) : null;
-  const settings = store.getChatSettings(String(ctx.chat.id));
+  const settings = await store.getChatSettings(String(ctx.chat.id));
   const image = await scanImage(scan, updated, metric, timeframe, true, charts, chartResult);
   const caption = renderScanCaption(scan, updated, false, true, settings.compact, settings.detailed);
   await ctx.editMessageMedia({
@@ -692,7 +692,7 @@ async function sendChartOnly(ctx: Context, address: Address, timeframe: ChartTim
   if (!scan) return;
   const result = await chartLoad ?? (scan.market.pairAddress ? await charts.candles(scan.market.pairAddress, timeframe, scan.market.pairCreatedAt).catch(() => null) : null);
   if (!result) return void await replyPanel(ctx, "📭", "Chart unavailable", ["No OHLCV history is indexed for this token yet."], "Try again after the pool records more trades.");
-  const call = ctx.chat ? store.getCall(String(ctx.chat.id), address) : null;
+  const call = ctx.chat ? await store.getCall(String(ctx.chat.id), address) : null;
   const image = await generateChartCard(scan, result.candles, result.timeframe, metric, call);
   await ctx.replyWithPhoto(new InputFile(image, `kapiscout-${scan.token.symbol}-${result.timeframe}.png`), {
     caption: `<b>$${escapeHtml(scan.token.symbol)} · ${result.timeframe} ${metric === "market_cap" ? "market cap" : "price"} chart</b>`, parse_mode: "HTML",
@@ -701,13 +701,13 @@ async function sendChartOnly(ctx: Context, address: Address, timeframe: ChartTim
 
 async function sendPnl(ctx: Context, address: Address, store: Store, scanner: TokenScanner, config: AppConfig): Promise<void> {
   if (!ctx.chat) return;
-  const call = store.getCall(String(ctx.chat.id), address);
+  const call = await store.getCall(String(ctx.chat.id), address);
   if (!call) return void await replyPanel(ctx, "🌱", "No first call recorded", ["This token has not been called in this chat yet."], "Paste its contract address to create the entry.");
   const scan = await withStatus(ctx, () => scanner.refreshMarket(address));
   if (!scan) return;
-  store.syncSecurityWatchers(String(ctx.chat.id), scan);
+  await store.syncSecurityWatchers(String(ctx.chat.id), scan);
   const currentMc = scan.market.marketCapUsd ?? scan.market.fdvUsd;
-  const updated = store.updateCallMarket(call.id, { priceUsd: scan.market.priceUsd, marketCapUsd: currentMc, liquidityUsd: scan.market.liquidityUsd, dexPaid: scan.market.dexPaid }) ?? call;
+  const updated = await store.updateCallMarket(call.id, { priceUsd: scan.market.priceUsd, marketCapUsd: currentMc, liquidityUsd: scan.market.liquidityUsd, dexPaid: scan.market.dexPaid }) ?? call;
   const reality = buildRealityReport(scan, updated);
   const image = await generatePnlCard(updated, scan);
   await ctx.replyWithPhoto(new InputFile(image, `kapiscout-${updated.symbol}-pnl.png`), {
@@ -720,13 +720,13 @@ async function sendReality(ctx: Context, address: Address, store: Store, scanner
   if (!ctx.chat) return;
   const scan = await withStatus(ctx, () => scanner.scan(address));
   if (!scan) return;
-  const call = store.getCall(String(ctx.chat.id), address);
+  const call = await store.getCall(String(ctx.chat.id), address);
   const reality = buildRealityReport(scan, call);
   const [launch, rwaDetails] = await Promise.all([
     within(scanner.launchForensics(scan), 6_000, null),
     within(scanner.rwaDetails(scan), 6_000, { quote: null, actions: [] }),
   ]);
-  const history = call ? summarizeLiquidityHistory(store.marketHistory(call.id)) : null;
+  const history = call ? summarizeLiquidityHistory(await store.marketHistory(call.id)) : null;
   const lines = [
     `<b>🧪 ${escapeHtml(scan.token.name)} · Kapi Reality Check</b>`,
     `<i>Conservative pool estimate · not a guaranteed fill</i>`,
@@ -792,7 +792,7 @@ async function sendReality(ctx: Context, address: Address, store: Store, scanner
 async function sendHolders(ctx: Context, address: Address, store: Store, scanner: TokenScanner): Promise<void> {
   const scan = await withStatus(ctx, () => scanner.scan(address, true));
   if (!scan) return;
-  if (ctx.chat) store.recordHolderSnapshot(String(ctx.chat.id), scan);
+  if (ctx.chat) await store.recordHolderSnapshot(String(ctx.chat.id), scan);
   const lines = scan.holders.holders.map((holder, index, holders) => `${index === holders.length - 1 ? "└" : "├"} ${holder.isContract ? "◼" : "◆"} <code>${compactAddress(holder.address)}</code> · <b>${holder.percent.toFixed(2)}%</b>${holder.label ? ` · ${escapeHtml(holder.label)}` : ""}`);
   await ctx.reply([
     `<b>💎 $${escapeHtml(scan.token.symbol)} · Holder Map</b>`,
@@ -806,7 +806,7 @@ async function sendHolders(ctx: Context, address: Address, store: Store, scanner
   ].join("\n"), { parse_mode: "HTML" });
 }
 
-async function sendAlertRules(ctx: Context, rules: ReturnType<Store["listAlertRules"]>): Promise<void> {
+async function sendAlertRules(ctx: Context, rules: Awaited<ReturnType<Store["listAlertRules"]>>): Promise<void> {
   if (!rules.length) return void await replyPanel(ctx,"⚡","No custom signals",["Create one with:","<code>/alert add Early direction=buy minvalue=5k maxmc=100k wallets=2 window=5</code>"]);
   await ctx.reply(["<b>⚡ CUSTOM SIGNALS</b>","",...rules.map((rule,index)=>`${index===rules.length-1?"└":"├"} <b>#${rule.id} · ${escapeHtml(rule.name)}</b>\n   ${rule.direction} · value ≥${formatUsd(rule.minValueUsd)} · LP ≥${formatUsd(rule.minLiquidityUsd)} · MC ${rule.maxMarketCapUsd==null?`≥${formatUsd(rule.minMarketCapUsd)}`:`${formatUsd(rule.minMarketCapUsd)}–${formatUsd(rule.maxMarketCapUsd)}`} · ${rule.minWallets}w/${rule.windowMinutes}m`),"","<i>Remove · /alert remove ID</i>"].join("\n"),{parse_mode:"HTML"});
 }
@@ -831,8 +831,8 @@ async function sendQuote(ctx:Context,address:Address,valueUsd:number,scanner:Tok
 }
 
 async function sendHolderChanges(ctx:Context,address:Address,store:Store,scanner:TokenScanner):Promise<void>{
-  if(!ctx.chat)return; const chatId=String(ctx.chat.id); const scan=await withStatus(ctx,()=>scanner.scan(address,true)); if(!scan)return; store.recordHolderSnapshot(chatId,scan);
-  const snapshots=store.holderSnapshots(chatId,address); const first=snapshots[0]; const last=snapshots.at(-1)!;
+  if(!ctx.chat)return; const chatId=String(ctx.chat.id); const scan=await withStatus(ctx,()=>scanner.scan(address,true)); if(!scan)return; await store.recordHolderSnapshot(chatId,scan);
+  const snapshots=await store.holderSnapshots(chatId,address); const first=snapshots[0]; const last=snapshots.at(-1)!;
   if(!first||snapshots.length<2)return void await replyPanel(ctx,"💎",`$${scan.token.symbol} · Holder Changes`,["First holder snapshot recorded.","Changes appear after the next 15-minute snapshot window."],"KapiScout does not invent historical holder data.");
   const oldMap=new Map(first.holders.map((item)=>[item.address.toLowerCase(),item.percent])); const newMap=new Map(last.holders.map((item)=>[item.address.toLowerCase(),item.percent]));
   const deltas=[...new Set([...oldMap.keys(),...newMap.keys()])].map((key)=>({key,delta:(newMap.get(key)??0)-(oldMap.get(key)??0)})).sort((a,b)=>Math.abs(b.delta)-Math.abs(a.delta)).slice(0,5);
@@ -841,14 +841,14 @@ async function sendHolderChanges(ctx:Context,address:Address,store:Store,scanner
 }
 
 async function sendTimeline(ctx:Context,address:Address,store:Store):Promise<void>{
-  if(!ctx.chat)return; const events=store.tokenTimeline(String(ctx.chat.id),address,20); if(!events.length)return void await replyPanel(ctx,"🕘","Timeline is empty",["Paste this CA once to create its first-call event."]);
+  if(!ctx.chat)return; const events=await store.tokenTimeline(String(ctx.chat.id),address,20); if(!events.length)return void await replyPanel(ctx,"🕘","Timeline is empty",["Paste this CA once to create its first-call event."]);
   const icons:Record<string,string>={CALL:"🌱",MILESTONE:"🚀",ATH:"⛰",DEX_PAID:"✅",LIQUIDITY:"💧",WALLET_BUY:"🟢",WALLET_SELL:"🔴",PAPER_BUY:"🧾",PAPER_SELL:"🧾"};
   await ctx.reply([`<b>🕘 $${escapeHtml(events[0]!.symbol)} · EVENT TIMELINE</b>`,"",...events.map((event,index)=>`${index===events.length-1?"└":"├"} ${icons[event.kind]??"•"} <b>${escapeHtml(event.title)}</b> · ${formatAge(event.createdAt)}${event.valueUsd==null?"":` · ${formatUsd(event.valueUsd)}`}`),"",`<code>${address}</code>`].join("\n"),{parse_mode:"HTML"});
 }
 
 async function showPaperMenu(ctx:Context,paper:PaperCompetitionService):Promise<void>{
   if(!ctx.chat||!ctx.from)return;
-  const chatId=String(ctx.chat.id);const userId=String(ctx.from.id);const competition=paper.latest(chatId);
+  const chatId=String(ctx.chat.id);const userId=String(ctx.from.id);const competition=await paper.latest(chatId);
   if(!competition||competition.status==="ENDED"){
     const previous=competition?`\n\nLast event · <b>${escapeHtml(competition.name)}</b> · finished`:"";
     const keyboard=new InlineKeyboard().text("🏁 Start Competition","ui:ask:paperstart").row();
@@ -856,32 +856,32 @@ async function showPaperMenu(ctx:Context,paper:PaperCompetitionService):Promise<
     keyboard.text("‹ Home","ui:home");
     return void await showUiPanel(ctx,`<b>🏁 KAPISCOUT PAPER ARENA</b>\n└ Exact onchain fills. Zero real funds.${previous}`,keyboard);
   }
-  const account=paper.account(competition.id,userId);
+  const account=await paper.account(competition.id,userId);
   const remaining=Math.max(0,competition.endsAt-Date.now());const days=Math.floor(remaining/86_400_000);const hours=Math.floor(remaining%86_400_000/3_600_000);
-  const caption=["<b>🏁 KAPISCOUT PAPER ARENA</b>",`└ <b>${escapeHtml(competition.name)}</b> · ${days}d ${hours}h left`,"",`Starting cash  <b>${formatUsd(competition.startingBalanceUsd)}</b>`,`Players        <b>${paper.participants(competition.id)}</b>`,"",account?`You are in · cash <b>${formatUsd(account.cashBalanceUsd)}</b>`:"Tap <b>Join Competition</b> to receive your paper balance.","","<i>Fills use the official Uniswap v4 quote. Gas and price impact count.</i>"].join("\n");
+  const caption=["<b>🏁 KAPISCOUT PAPER ARENA</b>",`└ <b>${escapeHtml(competition.name)}</b> · ${days}d ${hours}h left`,"",`Starting cash  <b>${formatUsd(competition.startingBalanceUsd)}</b>`,`Players        <b>${await paper.participants(competition.id)}</b>`,"",account?`You are in · cash <b>${formatUsd(account.cashBalanceUsd)}</b>`:"Tap <b>Join Competition</b> to receive your paper balance.","","<i>Fills use the official Uniswap v4 quote. Gas and price impact count.</i>"].join("\n");
   const keyboard=account?new InlineKeyboard().text("🟢 Buy","ui:ask:paperbuy").text("🔴 Sell","ui:ask:papersell").row().text("💳 My Balance","ui:paper").text("🏆 Leaderboard","ui:paper_lb").row().text("🕘 Trade History","ui:paper_history").text("⏹ End","ui:paper_end").row().text("‹ Home","ui:home"):new InlineKeyboard().text("✅ Join Competition","ui:paper_join").row().text("🏆 Leaderboard","ui:paper_lb").text("‹ Home","ui:home");
   await showUiPanel(ctx,caption,keyboard);
 }
 
 async function paperBuy(ctx:Context,address:Address,valueUsd:number,paper:PaperCompetitionService,store:Store):Promise<void>{
   if(!ctx.chat||!ctx.from)return;
-  const result=await paperAction(ctx,()=>paper.buy(String(ctx.chat!.id),String(ctx.from!.id),address,valueUsd));if(!result)return;
-  store.recordTokenEvent({chatId:String(ctx.chat.id),tokenAddress:address,symbol:result.scan.token.symbol,kind:"PAPER_BUY",title:`Competition buy ${formatUsd(result.spentUsd)}`,txHash:null,valueUsd:result.spentUsd});
+  const result=await paperAction(ctx,async ()=>await paper.buy(String(ctx.chat!.id),String(ctx.from!.id),address,valueUsd));if(!result)return;
+  await store.recordTokenEvent({chatId:String(ctx.chat.id),tokenAddress:address,symbol:result.scan.token.symbol,kind:"PAPER_BUY",title:`Competition buy ${formatUsd(result.spentUsd)}`,txHash:null,valueUsd:result.spentUsd});
   await replyPanel(ctx,"🟢",`FILLED · BUY $${result.scan.token.symbol}`,[`├ Cost       <b>${formatUsd(result.spentUsd)}</b>`,`├ Tokens     <b>${formatCompactNumber(result.tokenAmount)}</b>`,`├ Fill price ${formatTokenPrice(result.executionPriceUsd)}`,`├ Impact     ${formatImpact(result.priceImpactPercent)}`,`└ Gas        ${formatUsd(result.gasCostUsd)}`],"Official Uniswap v4 eth_call · no transaction sent.");
   await sendPaperPortfolio(ctx,paper);
 }
 
 async function paperSell(ctx:Context,address:Address,fraction:number,paper:PaperCompetitionService,store:Store):Promise<void>{
   if(!ctx.chat||!ctx.from)return;
-  const result=await paperAction(ctx,()=>paper.sell(String(ctx.chat!.id),String(ctx.from!.id),address,Math.min(1,fraction)));if(!result)return;
-  store.recordTokenEvent({chatId:String(ctx.chat.id),tokenAddress:address,symbol:result.scan.token.symbol,kind:"PAPER_SELL",title:`Competition sell ${(Math.min(1,fraction)*100).toFixed(0)}%`,txHash:null,valueUsd:result.netProceedsUsd});
+  const result=await paperAction(ctx,async ()=>await paper.sell(String(ctx.chat!.id),String(ctx.from!.id),address,Math.min(1,fraction)));if(!result)return;
+  await store.recordTokenEvent({chatId:String(ctx.chat.id),tokenAddress:address,symbol:result.scan.token.symbol,kind:"PAPER_SELL",title:`Competition sell ${(Math.min(1,fraction)*100).toFixed(0)}%`,txHash:null,valueUsd:result.netProceedsUsd});
   await replyPanel(ctx,result.realizedPnlUsd>=0?"🟢":"🔴",`FILLED · SELL $${result.scan.token.symbol}`,[`├ Net return <b>${formatUsd(result.netProceedsUsd)}</b>`,`├ Realized   <b>${formatSignedUsd(result.realizedPnlUsd)}</b>`,`├ Fill price ${formatTokenPrice(result.executionPriceUsd)}`,`├ Impact     ${formatImpact(result.priceImpactPercent)}`,`└ Gas        ${formatUsd(result.gasCostUsd)}`],"Official Uniswap v4 eth_call · PNL locked into your record.");
   await sendPaperPortfolio(ctx,paper);
 }
 
 async function sendPaperPortfolio(ctx:Context,paper:PaperCompetitionService,edit=false):Promise<void>{
   if(!ctx.chat||!ctx.from)return;
-  const snapshot=await paperAction(ctx,()=>paper.portfolio(String(ctx.chat!.id),String(ctx.from!.id)));if(!snapshot)return;
+  const snapshot=await paperAction(ctx,async ()=>await paper.portfolio(String(ctx.chat!.id),String(ctx.from!.id)));if(!snapshot)return;
   const image=await generatePaperPortfolioCard(snapshot);const caption=[`<b>💳 ${escapeHtml(snapshot.competition.name)} · MY BALANCE</b>`,`└ Rank <b>#${snapshot.rank??"—"}</b> of ${snapshot.participants} · ${snapshot.competition.status==="ACTIVE"?"live":"final"}`,"",`Balance  <b>${formatUsd(snapshot.equityUsd)}</b> · PNL <b>${formatSignedUsd(snapshot.totalPnlUsd)}</b>`,`Cash ${formatUsd(snapshot.cashBalanceUsd)} · Positions ${formatUsd(snapshot.positionsValueUsd)}`,"",snapshot.positions.some(item=>!item.quoteAvailable)?"⚠️ One or more positions currently have no executable exit and are valued at $0.":"<i>Executable exit value after estimated gas.</i>"].join("\n");
   const keyboard=new InlineKeyboard().text("↻ Refresh",`ui:paper_refresh:${ctx.from.id}`).text("🏆 Rankings","ui:paper_lb").row().text("🟢 Buy","ui:ask:paperbuy").text("🔴 Sell","ui:ask:papersell").row().text("‹ Arena","ui:paper_menu");
   if(edit){try{await ctx.editMessageMedia({type:"photo",media:new InputFile(image,"kapiscout-paper-balance.png"),caption,parse_mode:"HTML"},{reply_markup:keyboard});return;}catch{/* Send a fresh card if Telegram cannot edit the original media. */}}
@@ -889,14 +889,14 @@ async function sendPaperPortfolio(ctx:Context,paper:PaperCompetitionService,edit
 }
 
 async function sendPaperLeaderboard(ctx:Context,paper:PaperCompetitionService,edit=false):Promise<void>{
-  if(!ctx.chat)return;const result=await paperAction(ctx,()=>paper.leaderboard(String(ctx.chat!.id)));if(!result)return;
+  if(!ctx.chat)return;const result=await paperAction(ctx,async ()=>await paper.leaderboard(String(ctx.chat!.id)));if(!result)return;
   const image=await generatePaperLeaderboardCard(result.competition,result.entries);const leader=result.entries[0];const caption=[`<b>🏆 ${escapeHtml(result.competition.name)} · ${result.competition.status==="ACTIVE"?"LIVE":"FINAL"}</b>`,leader?`└ Leader <b>${escapeHtml(leader.username)}</b> · ${formatUsd(leader.equityUsd)} · ${leader.returnPercent>=0?"+":""}${leader.returnPercent.toFixed(2)}%`:"└ Waiting for competitors","","<i>Rankings use current executable exit quotes and refresh every 15 seconds.</i>"].join("\n");const keyboard=new InlineKeyboard().text("↻ Refresh","ui:paper_lb").text("💳 My Balance","ui:paper").row().text("‹ Arena","ui:paper_menu");
   if(edit){try{await ctx.editMessageMedia({type:"photo",media:new InputFile(image,"kapiscout-paper-leaderboard.png"),caption,parse_mode:"HTML"},{reply_markup:keyboard});return;}catch{/* Send a fresh card if Telegram cannot edit the original media. */}}
   await ctx.replyWithPhoto(new InputFile(image,"kapiscout-paper-leaderboard.png"),{caption,parse_mode:"HTML",reply_markup:keyboard});
 }
 
 async function sendPaperHistory(ctx:Context,paper:PaperCompetitionService):Promise<void>{
-  if(!ctx.chat||!ctx.from)return;const result=await paperAction(ctx,()=>Promise.resolve(paper.history(String(ctx.chat!.id),String(ctx.from!.id))));if(!result)return;
+  if(!ctx.chat||!ctx.from)return;const result=await paperAction(ctx,async ()=>Promise.resolve(paper.history(String(ctx.chat!.id),String(ctx.from!.id))));if(!result)return;
   const lines=result.trades.map((trade,index)=>`${index===result.trades.length-1?"└":"├"} ${trade.side==="BUY"?"🟢":"🔴"} <b>${trade.side} $${escapeHtml(trade.symbol)}</b> · ${formatUsd(trade.side==="BUY"?trade.grossValueUsd+trade.gasCostUsd:trade.grossValueUsd-trade.gasCostUsd)}${trade.realizedPnlUsd==null?"":` · ${formatSignedUsd(trade.realizedPnlUsd)}`} · ${formatAge(trade.createdAt)}`);
   await ctx.reply([`<b>🕘 ${escapeHtml(result.competition.name)} · TRADE HISTORY</b>`,`└ Exact fills · gas included`,"",...(lines.length?lines:["No trades yet."])].join("\n"),{parse_mode:"HTML",reply_markup:new InlineKeyboard().text("💳 My Balance","ui:paper").text("‹ Arena","ui:paper_menu")});
 }
@@ -908,19 +908,19 @@ async function paperAction<T>(ctx:Context,action:()=>Promise<T>):Promise<T|null>
 async function legacyPaperBuy(ctx:Context,address:Address,valueUsd:number,store:Store,scanner:TokenScanner):Promise<void>{
   if(!ctx.chat||!ctx.from)return; const scan=await withStatus(ctx,()=>scanner.scan(address,true)); if(!scan)return; const price=scan.market.priceUsd;
   if(price==null||price<=0)return void await replyPanel(ctx,"⚠️","Paper trade unavailable",["This token has no usable indexed USD price."]);
-  const position=store.paperBuy(String(ctx.chat.id),String(ctx.from.id),address,scan.token.symbol,valueUsd,price); store.recordTokenEvent({chatId:String(ctx.chat.id),tokenAddress:address,symbol:scan.token.symbol,kind:"PAPER_BUY",title:`Paper buy ${formatUsd(valueUsd)}`,txHash:null,valueUsd});
+  const position=await store.paperBuy(String(ctx.chat.id),String(ctx.from.id),address,scan.token.symbol,valueUsd,price); await store.recordTokenEvent({chatId:String(ctx.chat.id),tokenAddress:address,symbol:scan.token.symbol,kind:"PAPER_BUY",title:`Paper buy ${formatUsd(valueUsd)}`,txHash:null,valueUsd});
   await replyPanel(ctx,"🧾",`PAPER BUY · $${scan.token.symbol}`,[`├ Filled  <b>${formatUsd(valueUsd)}</b> at ${formatTokenPrice(price)}`,`├ Tokens  ${formatCompactNumber(valueUsd/price)}`,`└ Position cost  <b>${formatUsd(position.costBasisUsd)}</b>`],"Simulation only · no wallet connected and no transaction sent.");
 }
 
 async function legacyPaperSell(ctx:Context,address:Address,fraction:number,store:Store,scanner:TokenScanner):Promise<void>{
   if(!ctx.chat||!ctx.from)return; const scan=await withStatus(ctx,()=>scanner.scan(address,true)); if(!scan)return; const price=scan.market.priceUsd; if(price==null||price<=0)return void await replyPanel(ctx,"⚠️","Paper trade unavailable",["This token has no usable indexed USD price."]);
-  const before=store.paperPosition(String(ctx.chat.id),String(ctx.from.id),address); const position=store.paperSell(String(ctx.chat.id),String(ctx.from.id),address,fraction,price); if(!before||!position)return void await replyPanel(ctx,"📭","No paper position",["Open one with /paperbuy CA 100."]);
-  const proceeds=before.tokenAmount*Math.min(1,fraction)*price; store.recordTokenEvent({chatId:String(ctx.chat.id),tokenAddress:address,symbol:scan.token.symbol,kind:"PAPER_SELL",title:`Paper sell ${(Math.min(1,fraction)*100).toFixed(0)}%`,txHash:null,valueUsd:proceeds});
+  const before=await store.paperPosition(String(ctx.chat.id),String(ctx.from.id),address); const position=await store.paperSell(String(ctx.chat.id),String(ctx.from.id),address,fraction,price); if(!before||!position)return void await replyPanel(ctx,"📭","No paper position",["Open one with /paperbuy CA 100."]);
+  const proceeds=before.tokenAmount*Math.min(1,fraction)*price; await store.recordTokenEvent({chatId:String(ctx.chat.id),tokenAddress:address,symbol:scan.token.symbol,kind:"PAPER_SELL",title:`Paper sell ${(Math.min(1,fraction)*100).toFixed(0)}%`,txHash:null,valueUsd:proceeds});
   await replyPanel(ctx,"🧾",`PAPER SELL · $${scan.token.symbol}`,[`├ Proceeds  <b>${formatUsd(proceeds)}</b>`,`├ Remaining ${formatCompactNumber(position.tokenAmount)} tokens`,`└ Realized  <b>${formatSignedUsd(position.realizedPnlUsd)}</b>`],"Simulation only · live indexed price, no slippage execution.");
 }
 
 async function legacySendPaperPortfolio(ctx:Context,chatId:string,userId:string,store:Store,scanner:TokenScanner):Promise<void>{
-  const positions=store.paperPositions(chatId,userId); if(!positions.length)return void await replyPanel(ctx,"📭","No paper positions",["Open one with <code>/paperbuy CA 100</code>."]);
+  const positions=await store.paperPositions(chatId,userId); if(!positions.length)return void await replyPanel(ctx,"📭","No paper positions",["Open one with <code>/paperbuy CA 100</code>."]);
   const valued=await Promise.all(positions.slice(0,10).map(async(position)=>{const scan=await scanner.scan(position.tokenAddress).catch(()=>null);const price=scan?.market.priceUsd;const value=price==null?null:position.tokenAmount*price;return{...position,value,pnl:value==null?null:value-position.costBasisUsd+position.realizedPnlUsd};}));
   await ctx.reply(["<b>🧾 PAPER PORTFOLIO</b>",`└ ${valued.length} open position${valued.length===1?"":"s"}`,"",...valued.map((item,index)=>`${index===valued.length-1?"└":"├"} <b>$${escapeHtml(item.symbol)}</b> · ${formatUsd(item.value)} · ${formatSignedUsd(item.pnl)}`),"",`Total value <b>${formatUsd(valued.reduce((sum,item)=>sum+(item.value??0),0))}</b> · PNL <b>${formatSignedUsd(valued.reduce((sum,item)=>sum+(item.pnl??0),0))}</b>`,"<i>Simulation only · no real funds.</i>"].join("\n"),{parse_mode:"HTML"});
 }

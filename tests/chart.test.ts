@@ -5,7 +5,7 @@ import { autoTimeframe, generateChartCard } from "../src/chart.js";
 import type { Candle, TokenScan } from "../src/types.js";
 
 describe("Robinhood chart cards", () => {
-  it("chooses a useful automatic timeframe", () => {
+  it("chooses a useful automatic timeframe", async () => {
     expect(autoTimeframe(Date.now() - 2 * 60 * 60 * 1_000)).toBe("5m");
     expect(autoTimeframe(Date.now() - 24 * 60 * 60 * 1_000)).toBe("15m");
     expect(autoTimeframe(Date.now() - 8 * 24 * 60 * 60 * 1_000)).toBe("1h");

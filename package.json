@@ -16,6 +16,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@libsql/client": "^0.17.4",
     "dotenv": "^16.6.1",
     "grammy": "^1.38.2",
     "sharp": "^0.35.3",

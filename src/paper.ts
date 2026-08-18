@@ -45,62 +45,62 @@ export class PaperCompetitionService {
   start():void{
     if(this.timer)return;
     void this.finalizeExpired();
-    this.timer=setInterval(()=>void this.finalizeExpired(),REFRESH_MS);
+    this.timer=setInterval(async ()=>void await this.finalizeExpired(),REFRESH_MS);
     this.timer.unref();
   }
 
   stop():void{if(this.timer)clearInterval(this.timer);this.timer=null;}
 
-  create(chatId:string,name:string,startingBalanceUsd:number,durationDays:number,createdBy:string):PaperCompetition{
-    return this.store.createPaperCompetition({chatId,name,startingBalanceUsd,durationDays,createdBy});
+  async create(chatId:string,name:string,startingBalanceUsd:number,durationDays:number,createdBy:string): Promise<PaperCompetition> {
+    return await this.store.createPaperCompetition({chatId,name,startingBalanceUsd,durationDays,createdBy});
   }
 
-  active(chatId:string):PaperCompetition|null{return this.store.activePaperCompetition(chatId);}
-  latest(chatId:string):PaperCompetition|null{return this.store.latestPaperCompetition(chatId);}
-  account(competitionId:number,userId:string):PaperCompetitionAccount|null{return this.store.paperCompetitionAccount(competitionId,userId);}
-  participants(competitionId:number):number{return this.store.paperCompetitionAccounts(competitionId).length;}
+  async active(chatId:string): Promise<PaperCompetition|null> {return await this.store.activePaperCompetition(chatId);}
+  async latest(chatId:string): Promise<PaperCompetition|null> {return await this.store.latestPaperCompetition(chatId);}
+  async account(competitionId:number,userId:string): Promise<PaperCompetitionAccount|null> {return await this.store.paperCompetitionAccount(competitionId,userId);}
+  async participants(competitionId:number): Promise<number> {return (await this.store.paperCompetitionAccounts(competitionId)).length;}
 
-  join(chatId:string,userId:string,username:string):PaperCompetitionAccount{
-    const competition=this.requireActive(chatId);
-    return this.store.joinPaperCompetition(competition.id,userId,username);
+  async join(chatId:string,userId:string,username:string): Promise<PaperCompetitionAccount> {
+    const competition=await this.requireActive(chatId);
+    return await this.store.joinPaperCompetition(competition.id,userId,username);
   }
 
   async buy(chatId:string,userId:string,address:Address,valueUsd:number):Promise<PaperBuyResult>{
-    const competition=this.requireActive(chatId);
-    this.requireAccount(competition.id,userId);
+    const competition=await this.requireActive(chatId);
+    await this.requireAccount(competition.id,userId);
     if(!Number.isFinite(valueUsd)||valueUsd<=0)throw new Error("Choose a paper buy amount above $0.");
     const scan=await this.scanner.scan(address,true);
     const quote=await this.scanner.quotePaperBuy(scan,valueUsd);
-    const position=this.store.executeCompetitionBuy({competitionId:competition.id,userId,tokenAddress:address,symbol:scan.token.symbol,quote,marketCapUsd:scan.market.marketCapUsd??scan.market.fdvUsd});
+    const position=await this.store.executeCompetitionBuy({competitionId:competition.id,userId,tokenAddress:address,symbol:scan.token.symbol,quote,marketCapUsd:scan.market.marketCapUsd??scan.market.fdvUsd});
     this.clearCompetitionCache(competition.id);
     return {scan,position,spentUsd:quote.grossValueUsd+quote.gasCostUsd,gasCostUsd:quote.gasCostUsd,tokenAmount:quote.tokenAmount,executionPriceUsd:quote.executionPriceUsd,priceImpactPercent:quote.priceImpactPercent};
   }
 
   async sell(chatId:string,userId:string,address:Address,fraction:number):Promise<PaperSellResult>{
-    const competition=this.requireActive(chatId);
-    this.requireAccount(competition.id,userId);
+    const competition=await this.requireActive(chatId);
+    await this.requireAccount(competition.id,userId);
     if(!Number.isFinite(fraction)||fraction<=0||fraction>1)throw new Error("Choose a sell size from 1% to 100%.");
-    const before=this.store.paperCompetitionPosition(competition.id,userId,address);
+    const before=await this.store.paperCompetitionPosition(competition.id,userId,address);
     if(!before||before.tokenAmount<=0)throw new Error("You do not have an open position in this token.");
     const tokenAmount=before.tokenAmount*fraction;
     const scan=await this.scanner.scan(address,true);
     const quote=await this.scanner.quotePaperSell(scan,tokenAmount);
-    const result=this.store.executeCompetitionSell({competitionId:competition.id,userId,tokenAddress:address,symbol:before.symbol,quote,marketCapUsd:scan.market.marketCapUsd??scan.market.fdvUsd});
+    const result=await this.store.executeCompetitionSell({competitionId:competition.id,userId,tokenAddress:address,symbol:before.symbol,quote,marketCapUsd:scan.market.marketCapUsd??scan.market.fdvUsd});
     this.clearCompetitionCache(competition.id);
     return {scan,position:result.position,grossValueUsd:quote.grossValueUsd,netProceedsUsd:result.netProceedsUsd,gasCostUsd:quote.gasCostUsd,tokenAmount:quote.tokenAmount,executionPriceUsd:quote.executionPriceUsd,priceImpactPercent:quote.priceImpactPercent,realizedPnlUsd:result.realizedPnlUsd};
   }
 
   async portfolio(chatId:string,userId:string):Promise<PaperPortfolioSnapshot>{
-    const competition=this.store.latestPaperCompetition(chatId);
+    const competition=await this.store.latestPaperCompetition(chatId);
     if(!competition)throw new Error("No paper competition exists in this chat yet.");
-    const account=this.requireAccount(competition.id,userId);
+    const account=await this.requireAccount(competition.id,userId);
     const positions=await this.valuePositions(competition.id,userId);
     const livePositionsValue=positions.reduce((sum,item)=>sum+item.liquidationValueUsd,0);
     const liveEquity=account.cashBalanceUsd+livePositionsValue;
     const equityUsd=competition.status==="ENDED"&&account.finalEquityUsd!=null?account.finalEquityUsd:liveEquity;
     const totalPnlUsd=competition.status==="ENDED"&&account.finalPnlUsd!=null?account.finalPnlUsd:equityUsd-account.startingBalanceUsd;
     let rank=account.finalRank;
-    let participants=this.store.paperCompetitionAccounts(competition.id).length;
+    let participants=(await this.store.paperCompetitionAccounts(competition.id)).length;
     if(competition.status==="ACTIVE"){
       const board=await this.leaderboardForCompetition(competition);
       rank=board.findIndex(item=>item.userId===userId)+1||null;
@@ -110,36 +110,37 @@ export class PaperCompetitionService {
   }
 
   async leaderboard(chatId:string):Promise<{competition:PaperCompetition;entries:PaperLeaderboardEntry[]}>{
-    const competition=this.store.latestPaperCompetition(chatId);
+    const competition=await this.store.latestPaperCompetition(chatId);
     if(!competition)throw new Error("No paper competition exists in this chat yet.");
     return {competition,entries:await this.leaderboardForCompetition(competition)};
   }
 
-  history(chatId:string,userId:string,limit=12):{competition:PaperCompetition;trades:PaperCompetitionTrade[]}{
-    const competition=this.store.latestPaperCompetition(chatId);
+  async history(chatId:string,userId:string,limit=12):Promise<{competition:PaperCompetition;trades:PaperCompetitionTrade[]}>{
+    const competition=await this.store.latestPaperCompetition(chatId);
     if(!competition)throw new Error("No paper competition exists in this chat yet.");
-    this.requireAccount(competition.id,userId);
-    return {competition,trades:this.store.paperCompetitionTrades(competition.id,userId,limit)};
+    await this.requireAccount(competition.id,userId);
+    return {competition,trades:await this.store.paperCompetitionTrades(competition.id,userId,limit)};
   }
 
   async end(chatId:string):Promise<{competition:PaperCompetition;entries:PaperLeaderboardEntry[]}>{
-    const competition=this.requireActive(chatId);
+    const competition=await this.requireActive(chatId);
     const entries=await this.liveLeaderboard(competition);
-    const ended=this.store.finalizePaperCompetition(competition.id,entries.map((entry,index)=>({userId:entry.userId,equityUsd:entry.equityUsd,pnlUsd:entry.pnlUsd,rank:index+1})),Date.now());
+    const ended=await this.store.finalizePaperCompetition(competition.id,entries.map((entry,index)=>({userId:entry.userId,equityUsd:entry.equityUsd,pnlUsd:entry.pnlUsd,rank:index+1})),Date.now());
     if(!ended)throw new Error("The competition could not be finalized.");
     return {competition:ended,entries};
   }
 
   private async leaderboardForCompetition(competition:PaperCompetition):Promise<PaperLeaderboardEntry[]>{
-    const accounts=this.store.paperCompetitionAccounts(competition.id,100);
+    const accounts=await this.store.paperCompetitionAccounts(competition.id,100);
     if(competition.status==="ENDED"&&accounts.every(account=>account.finalEquityUsd!=null)){
-      return accounts.map(account=>({userId:account.userId,username:account.username,equityUsd:account.finalEquityUsd!,pnlUsd:account.finalPnlUsd!,returnPercent:account.startingBalanceUsd>0?account.finalPnlUsd!/account.startingBalanceUsd*100:0,wins:account.wins,losses:account.losses,openPositions:this.store.paperCompetitionPositions(competition.id,account.userId).length})).sort((a,b)=>b.equityUsd-a.equityUsd);
+      const settled=await Promise.all(accounts.map(async (account)=>({userId:account.userId,username:account.username,equityUsd:account.finalEquityUsd!,pnlUsd:account.finalPnlUsd!,returnPercent:account.startingBalanceUsd>0?account.finalPnlUsd!/account.startingBalanceUsd*100:0,wins:account.wins,losses:account.losses,openPositions:(await this.store.paperCompetitionPositions(competition.id,account.userId)).length})));
+      return settled.sort((a,b)=>b.equityUsd-a.equityUsd);
     }
-    return this.liveLeaderboard(competition);
+    return await this.liveLeaderboard(competition);
   }
 
   private async liveLeaderboard(competition:PaperCompetition):Promise<PaperLeaderboardEntry[]>{
-    const accounts=this.store.paperCompetitionAccounts(competition.id,100);
+    const accounts=await this.store.paperCompetitionAccounts(competition.id,100);
     const entries=await Promise.all(accounts.map(async account=>{
       const positions=await this.valuePositions(competition.id,account.userId);
       const equityUsd=account.cashBalanceUsd+positions.reduce((sum,item)=>sum+item.liquidationValueUsd,0);
@@ -150,7 +151,7 @@ export class PaperCompetitionService {
   }
 
   private async valuePositions(competitionId:number,userId:string):Promise<PaperPositionValuation[]>{
-    return Promise.all(this.store.paperCompetitionPositions(competitionId,userId).map(position=>this.valuePosition(position)));
+    return Promise.all((await this.store.paperCompetitionPositions(competitionId,userId)).map(async position=>await this.valuePosition(position)));
   }
 
   private async valuePosition(position:PaperCompetitionPosition):Promise<PaperPositionValuation>{
@@ -169,14 +170,14 @@ export class PaperCompetitionService {
     return value;
   }
 
-  private requireActive(chatId:string):PaperCompetition{
-    const competition=this.store.activePaperCompetition(chatId);
+  private async requireActive(chatId:string): Promise<PaperCompetition> {
+    const competition=await this.store.activePaperCompetition(chatId);
     if(!competition)throw new Error("There is no active paper competition in this chat.");
     return competition;
   }
 
-  private requireAccount(competitionId:number,userId:string):PaperCompetitionAccount{
-    const account=this.store.paperCompetitionAccount(competitionId,userId);
+  private async requireAccount(competitionId:number,userId:string): Promise<PaperCompetitionAccount> {
+    const account=await this.store.paperCompetitionAccount(competitionId,userId);
     if(!account)throw new Error("Join the competition before paper trading.");
     return account;
   }
@@ -186,10 +187,10 @@ export class PaperCompetitionService {
   }
 
   private async finalizeExpired():Promise<void>{
-    for(const competition of this.store.expiredActivePaperCompetitions()){
+    for(const competition of await this.store.expiredActivePaperCompetitions()){
       try{
         const entries=await this.liveLeaderboard(competition);
-        this.store.finalizePaperCompetition(competition.id,entries.map((entry,index)=>({userId:entry.userId,equityUsd:entry.equityUsd,pnlUsd:entry.pnlUsd,rank:index+1})),competition.endsAt);
+        await this.store.finalizePaperCompetition(competition.id,entries.map((entry,index)=>({userId:entry.userId,equityUsd:entry.equityUsd,pnlUsd:entry.pnlUsd,rank:index+1})),competition.endsAt);
       }catch(error){console.error(`Paper competition ${competition.id} finalization failed`,error);}
     }
   }

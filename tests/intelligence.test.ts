@@ -4,7 +4,7 @@ import { buildRealityReport, estimateExit, estimateRealMultiple, summarizeLiquid
 import type { CallRecord, TokenScan } from "../src/types.js";
 
 describe("Kapi Reality Check", () => {
-  it("shows severe impact when the requested exit is large relative to liquidity", () => {
+  it("shows severe impact when the requested exit is large relative to liquidity", async () => {
     const tiny = estimateExit(1_000, 440);
     const healthy = estimateExit(1_000, 100_000);
     expect(tiny.receivedUsd).toBeLessThan(200);
@@ -12,7 +12,7 @@ describe("Kapi Reality Check", () => {
     expect(healthy.impactPercent).toBeLessThan(3);
   });
 
-  it("separates headline PNL from estimated executable PNL", () => {
+  it("separates headline PNL from estimated executable PNL", async () => {
     const call = callFixture();
     expect(estimateRealMultiple(call, 500_000, 2_000, 1_000)).toBeLessThan(5);
     const report = buildRealityReport(scanFixture(), call);
@@ -21,7 +21,7 @@ describe("Kapi Reality Check", () => {
     expect(report.exitScore).toBeLessThan(50);
   });
 
-  it("summarizes liquidity deterioration", () => {
+  it("summarizes liquidity deterioration", async () => {
     const summary = summarizeLiquidityHistory([
       { capturedAt: 1, priceUsd: 1, marketCapUsd: 1, liquidityUsd: 10_000 },
       { capturedAt: 2, priceUsd: 1, marketCapUsd: 1, liquidityUsd: 4_000 },

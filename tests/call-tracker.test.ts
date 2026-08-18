@@ -9,15 +9,23 @@ import type { MarketClient } from "../src/market.js";
 import type { MarketSnapshot, TokenScan } from "../src/types.js";
 
 const directories: string[] = [];
-afterEach(() => directories.splice(0).forEach((directory) => rmSync(directory, { recursive: true, force: true })));
+const openStores: Array<{ close: () => void }> = [];
+afterEach(() => {
+  for (const store of openStores.splice(0)) { try { store.close(); } catch { /* already closed */ } }
+  for (const directory of directories.splice(0)) {
+    try { rmSync(directory, { recursive: true, force: true }); } catch { /* windows file lock */ }
+  }
+});
 
 describe("CallTracker", () => {
   it("sends deduplicated milestone, DEX-paid and liquidity alerts", async () => {
     const directory = mkdtempSync(join(tmpdir(), "kapiscout-tracker-"));
     directories.push(directory);
     const store = new Store(join(directory, "test.db"));
-    store.ensureChat("1", "Test");
-    store.recordCall({ chatId: "1", messageId: 1, userId: "2", username: "@caller", scan: scanFixture() });
+    await store.init();
+  openStores.push(store);
+    await store.ensureChat("1", "Test");
+    await store.recordCall({ chatId: "1", messageId: 1, userId: "2", username: "@caller", scan: scanFixture() });
     const market: MarketSnapshot = { ...scanFixture().market, marketCapUsd: 210_000, fdvUsd: 210_000, liquidityUsd: 8_000, dexPaid: true };
     const fakeMarket = { getBestMarket: async () => market } as unknown as MarketClient;
     const alerts: string[] = [];
@@ -29,7 +37,7 @@ describe("CallTracker", () => {
     const count = alerts.length;
     await tracker.refresh();
     expect(alerts.length).toBe(count);
-    store.close();
+    await store.close();
   });
 });
 

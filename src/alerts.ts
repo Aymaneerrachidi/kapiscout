@@ -59,7 +59,7 @@ export class WalletAlertService {
   }
 
   private async handleBlock(transactions: readonly (Hash | Transaction)[]): Promise<void> {
-    const tracked = new Set([...this.store.trackedAddressSet(), ...this.store.securityWatchedAddressSet()]);
+    const tracked = new Set([...await this.store.trackedAddressSet(), ...await this.store.securityWatchedAddressSet()]);
     if (tracked.size === 0) return;
     const matches = transactions.filter(
       (tx): tx is Transaction => typeof tx !== "string" && tracked.has(tx.from.toLowerCase()),
@@ -100,10 +100,10 @@ export class WalletAlertService {
   }
 
   private async dispatchSecurityTransfers(txHash: Hash, wallet: Address, transfers: Transfer[], movement: WalletMovement | null): Promise<void> {
-    const watches = this.store.findSecurityWallets(wallet);
+    const watches = await this.store.findSecurityWallets(wallet);
     if (!watches.length) return;
     for (const watch of watches) {
-      if (!this.store.chatAllowsAlert(watch.chatId, watch.kind === "DEV" ? "dev" : "whale")) continue;
+      if (!await this.store.chatAllowsAlert(watch.chatId, watch.kind === "DEV" ? "dev" : "whale")) continue;
       const outgoing = transfers.filter((item) =>
         item.from.toLowerCase() === wallet.toLowerCase() &&
         item.token.toLowerCase() === watch.tokenAddress.toLowerCase(),
@@ -117,7 +117,7 @@ export class WalletAlertService {
       if (watch.kind === "DEV" && !isSale) continue;
       if (watch.kind === "WHALE" && (supplyPercent == null || supplyPercent < 0.25)) continue;
       const eventKind = watch.kind === "DEV" ? "dev-sell" : "whale-transfer";
-      if (!this.store.claimAlert(`${txHash}:${eventKind}`, wallet, watch.chatId)) continue;
+      if (!await this.store.claimAlert(`${txHash}:${eventKind}`, wallet, watch.chatId)) continue;
       const html = [
         `<b>${watch.kind === "DEV" ? "🚨 DEV SELL" : "🐋 LARGE HOLDER MOVE"} · $${escapeHtml(watch.symbol)}</b>`,
         "",
@@ -134,7 +134,7 @@ export class WalletAlertService {
   }
 
   private async dispatchMovement(movement: WalletMovement): Promise<void> {
-    const trackedEntries = this.store.findWallets(movement.wallet);
+    const trackedEntries = await this.store.findWallets(movement.wallet);
     if (!trackedEntries.length) return;
     const scan = await this.scanner.scan(movement.tokenAddress).catch(() => null);
     const tokenDecimals = scan?.token.decimals ?? 18;
@@ -147,11 +147,11 @@ export class WalletAlertService {
 
     for (const tracked of trackedEntries) {
       const chats = tracked.isKol
-        ? this.store.listKolAlertChats()
+        ? await this.store.listKolAlertChats()
         : tracked.chatId ? [tracked.chatId] : [];
       for (const chatId of new Set(chats)) {
         const symbol = scan?.token.symbol ?? compactAddress(movement.tokenAddress);
-        const inserted = this.store.recordWalletMovement({
+        const inserted = await this.store.recordWalletMovement({
           chatId,
           walletAddress: movement.wallet,
           walletLabel: tracked.label,
@@ -166,7 +166,7 @@ export class WalletAlertService {
           liquidityUsd: scan?.market.liquidityUsd ?? null,
           occurredAt: Date.now(),
         });
-        if (inserted) this.store.recordTokenEvent({
+        if (inserted) await this.store.recordTokenEvent({
           chatId,
           tokenAddress: movement.tokenAddress,
           symbol,
@@ -175,7 +175,7 @@ export class WalletAlertService {
           txHash: movement.txHash,
           valueUsd: valuation.valueUsd,
         });
-        if (!this.store.claimAlert(movement.txHash, movement.wallet, chatId)) continue;
+        if (!await this.store.claimAlert(movement.txHash, movement.wallet, chatId)) continue;
         const html = renderAlert(tracked, movement, symbol, amount, valuation, tokenPriceUsd, marketCap, scan?.market.liquidityUsd ?? null);
         const image = await generateWalletAlertCard({ scan, label: tracked.label, isKol: tracked.isKol, walletAddress: movement.wallet, direction: movement.direction, symbol, tokenAmount: amount, valueUsd: valuation.valueUsd, priceUsd: tokenPriceUsd, marketCapUsd: marketCap, liquidityUsd: scan?.market.liquidityUsd ?? null }).catch((error) => { console.warn("Wallet alert card failed", error); return undefined; });
         await this.send(chatId, html, movement.txHash, movement.wallet, image);
@@ -185,13 +185,13 @@ export class WalletAlertService {
   }
 
   private async dispatchCustomRules(chatId: string, movement: WalletMovement, symbol: string, valueUsd: number | null, marketCapUsd: number | null, liquidityUsd: number | null): Promise<void> {
-    for (const rule of this.store.listAlertRules(chatId).filter((item) => item.enabled)) {
+    for (const rule of (await this.store.listAlertRules(chatId)).filter((item) => item.enabled)) {
       if (rule.direction !== "ANY" && rule.direction !== movement.direction) continue;
       if ((valueUsd ?? 0) < rule.minValueUsd || (marketCapUsd ?? 0) < rule.minMarketCapUsd || (liquidityUsd ?? 0) < rule.minLiquidityUsd) continue;
       if (rule.maxMarketCapUsd != null && (marketCapUsd == null || marketCapUsd > rule.maxMarketCapUsd)) continue;
       const since = Date.now() - rule.windowMinutes * 60_000;
-      const wallets = this.store.matchingWalletCount(chatId, movement.tokenAddress, since, rule.direction);
-      if (wallets < rule.minWallets || !this.store.claimCustomAlert(rule, movement.tokenAddress)) continue;
+      const wallets = await this.store.matchingWalletCount(chatId, movement.tokenAddress, since, rule.direction);
+      if (wallets < rule.minWallets || !await this.store.claimCustomAlert(rule, movement.tokenAddress)) continue;
       const html = [
         `<b>⚡ CUSTOM SIGNAL · ${escapeHtml(rule.name)}</b>`,
         `└ <b>$${escapeHtml(symbol)}</b> · ${movement.direction} · ${wallets} wallet${wallets === 1 ? "" : "s"}`,

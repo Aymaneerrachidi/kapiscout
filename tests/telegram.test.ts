@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { claimRefresh } from "../src/telegram.js";
 
 describe("Telegram refresh cooldown", () => {
-  it("allows one refresh every fifteen seconds", () => {
+  it("allows one refresh every fifteen seconds", async () => {
     const cooldowns = new Map<string, number>();
     expect(claimRefresh(cooldowns, "chat:message", 100_000)).toBe(0);
     expect(claimRefresh(cooldowns, "chat:message", 101_000)).toBe(14);

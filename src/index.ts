@@ -14,7 +14,8 @@ import { PaperCompetitionService } from "./paper.js";
 
 const config = loadConfig();
 const store = new Store(config.dbPath);
-for (const kol of config.kolWallets) store.upsertKol(kol.label, kol.address);
+await store.init();
+for (const kol of config.kolWallets) await store.upsertKol(kol.label, kol.address);
 
 const client = createRobinhoodClient(config);
 const market = new MarketClient(config.dexScreenerChainId);
@@ -22,7 +23,7 @@ const blockscout = new BlockscoutClient(config.blockscoutApiUrl);
 const rwa = new RobinhoodRwaClient(config.chainId);
 const scanner = new TokenScanner(client, blockscout, market, config, rwa);
 const paper = new PaperCompetitionService(store, scanner);
-const bot = createTelegramBot(config, store, scanner, paper);
+const bot = await createTelegramBot(config, store, scanner, paper);
 const callTracker = new CallTracker(store, market, config.callRefreshIntervalMs, async (chatId, html, tokenAddress) => {
   await bot.api.sendMessage(chatId, html, {
     parse_mode: "HTML",
@@ -74,7 +75,7 @@ async function shutdown(signal: string): Promise<void> {
   holderTracker.stop();
   paper.stop();
   await bot.stop();
-  store.close();
+  await store.close();
 }
 
 process.once("SIGINT", () => void shutdown("SIGINT"));

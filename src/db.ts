@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { SqlDatabase, resolveDatabaseUrl } from "./sql.js";
 import { getAddress, type Address } from "viem";
 import type {
   CallerStats,
@@ -66,19 +66,23 @@ interface WalletRow {
 }
 
 export class Store {
-  readonly db: DatabaseSync;
+  readonly db: SqlDatabase;
 
   constructor(path: string) {
-    const absolute = resolve(path);
-    mkdirSync(dirname(absolute), { recursive: true });
-    this.db = new DatabaseSync(absolute);
-    this.db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
-    this.migrate();
-    this.backfillProofs();
+    const { url, authToken } = resolveDatabaseUrl(path);
+    if (url.startsWith("file:")) mkdirSync(dirname(resolve(path)), { recursive: true });
+    this.db = new SqlDatabase(url, authToken);
   }
 
-  private migrate(): void {
-    this.db.exec(`
+  /** Must be awaited once before any other call. */
+  async init(): Promise<void> {
+    await this.db.exec("PRAGMA foreign_keys = ON;");
+    await this.migrate();
+    await this.backfillProofs();
+  }
+
+  private async migrate(): Promise<void> {
+    await this.db.exec(`
       CREATE TABLE IF NOT EXISTS chats (
         chat_id TEXT PRIMARY KEY,
         title TEXT,
@@ -382,35 +386,35 @@ export class Store {
       ["paper_competition_accounts", "final_equity_usd", "REAL"],
       ["paper_competition_accounts", "final_pnl_usd", "REAL"],
       ["paper_competition_accounts", "final_rank", "INTEGER"],
-    ] as const) this.ensureColumn(table, column, definition);
+    ] as const) await this.ensureColumn(table, column, definition);
   }
 
-  private backfillProofs(): void {
-    const rows = this.db.prepare("SELECT * FROM calls WHERE proof_hash IS NULL OR proof_hash = ''").all() as unknown as CallRow[];
-    const update = this.db.prepare("UPDATE calls SET proof_hash = ? WHERE id = ?");
+  private async backfillProofs(): Promise<void> {
+    const rows = await this.db.prepare("SELECT * FROM calls WHERE proof_hash IS NULL OR proof_hash = ''").all() as unknown as CallRow[];
+    const update = await this.db.prepare("UPDATE calls SET proof_hash = ? WHERE id = ?");
     for (const row of rows) update.run(proofForRow(row), row.id);
   }
 
-  private ensureColumn(table: string, column: string, definition: string): void {
-    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-    if (!columns.some((item) => item.name === column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  private async ensureColumn(table: string, column: string, definition: string): Promise<void> {
+    const columns = await this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!columns.some((item) => item.name === column)) await this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 
-  close(): void {
+  async close(): Promise<void> {
     this.db.close();
   }
 
-  ensureChat(chatId: string, title: string | null): void {
+  async ensureChat(chatId: string, title: string | null): Promise<void> {
     const now = Date.now();
-    this.db.prepare(`
+    await this.db.prepare(`
       INSERT INTO chats(chat_id, title, created_at, updated_at)
       VALUES (?, ?, ?, ?)
       ON CONFLICT(chat_id) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at
     `).run(chatId, title, now, now);
   }
 
-  getChatSettings(chatId: string): ChatSettings {
-    const row = this.db.prepare("SELECT * FROM chats WHERE chat_id = ?").get(chatId) as Record<string, number | string> | undefined;
+  async getChatSettings(chatId: string): Promise<ChatSettings> {
+    const row = await this.db.prepare("SELECT * FROM chats WHERE chat_id = ?").get(chatId) as Record<string, number | string> | undefined;
     return {
       contractEnabled: row ? Boolean(row.contract_enabled) : true,
       compact: row ? Boolean(row.compact) : false,
@@ -435,29 +439,29 @@ export class Store {
     };
   }
 
-  updateChatSetting(chatId: string, field: "contract_enabled" | "compact" | "detailed" | "kol_alerts" | "show_chart" | "buttons_enabled" | "admin_only" | "milestone_alerts" | "ath_alerts" | "dex_paid_alerts" | "liquidity_alerts" | "dev_alerts" | "whale_alerts", enabled: boolean): void {
+  async updateChatSetting(chatId: string, field: "contract_enabled" | "compact" | "detailed" | "kol_alerts" | "show_chart" | "buttons_enabled" | "admin_only" | "milestone_alerts" | "ath_alerts" | "dex_paid_alerts" | "liquidity_alerts" | "dev_alerts" | "whale_alerts", enabled: boolean): Promise<void> {
     const allowed = new Set(["contract_enabled", "compact", "detailed", "kol_alerts", "show_chart", "buttons_enabled", "admin_only", "milestone_alerts", "ath_alerts", "dex_paid_alerts", "liquidity_alerts", "dev_alerts", "whale_alerts"]);
     if (!allowed.has(field)) throw new Error("Unknown chat setting");
-    this.db.prepare(`UPDATE chats SET ${field} = ?, updated_at = ? WHERE chat_id = ?`).run(enabled ? 1 : 0, Date.now(), chatId);
+    await this.db.prepare(`UPDATE chats SET ${field} = ?, updated_at = ? WHERE chat_id = ?`).run(enabled ? 1 : 0, Date.now(), chatId);
   }
 
-  updateMinMarketCap(chatId: string, value: number): void {
-    this.db.prepare("UPDATE chats SET min_market_cap_usd = ?, updated_at = ? WHERE chat_id = ?")
+  async updateMinMarketCap(chatId: string, value: number): Promise<void> {
+    await this.db.prepare("UPDATE chats SET min_market_cap_usd = ?, updated_at = ? WHERE chat_id = ?")
       .run(Math.max(0, value), Date.now(), chatId);
   }
 
-  updateChartPreference(chatId: string, metric: ChartMetric, timeframe: ChartTimeframe): void {
-    this.db.prepare("UPDATE chats SET chart_metric = ?, chart_timeframe = ?, updated_at = ? WHERE chat_id = ?")
+  async updateChartPreference(chatId: string, metric: ChartMetric, timeframe: ChartTimeframe): Promise<void> {
+    await this.db.prepare("UPDATE chats SET chart_metric = ?, chart_timeframe = ?, updated_at = ? WHERE chat_id = ?")
       .run(metric, timeframe, Date.now(), chatId);
   }
 
-  recordCall(input: {
+  async recordCall(input: {
     chatId: string;
     messageId: number;
     userId: string;
     username: string;
     scan: TokenScan;
-  }): { call: CallRecord; created: boolean } {
+  }): Promise<{ call: CallRecord; created: boolean }> {
     const now = Date.now();
     const market = input.scan.market;
     const proofHash = proofForValues({
@@ -466,7 +470,7 @@ export class Store {
       entryPriceUsd: market.priceUsd, entryMarketCapUsd: market.marketCapUsd ?? market.fdvUsd,
       entryLiquidityUsd: market.liquidityUsd,
     });
-    const result = this.db.prepare(`
+    const result = await this.db.prepare(`
       INSERT OR IGNORE INTO calls(
         chat_id, message_id, user_id, username, token_address, symbol,
         entry_price_usd, entry_market_cap_usd, entry_liquidity_usd,
@@ -497,7 +501,7 @@ export class Store {
     );
     if (result.changes === 0 && (market.priceUsd != null || market.marketCapUsd != null || market.fdvUsd != null)) {
       const marketCap = market.marketCapUsd ?? market.fdvUsd;
-      this.db.prepare(`
+      await this.db.prepare(`
         UPDATE calls SET
           symbol = ?,
           entry_price_usd = COALESCE(entry_price_usd, ?),
@@ -540,12 +544,12 @@ export class Store {
         input.scan.token.address.toLowerCase(),
       );
     }
-    this.syncSecurityWatchers(input.chatId, input.scan);
-    const call = this.getCall(input.chatId, input.scan.token.address);
+    await this.syncSecurityWatchers(input.chatId, input.scan);
+    const call = await this.getCall(input.chatId, input.scan.token.address);
     if (!call) throw new Error("Failed to load recorded call");
-    this.recordMarketSnapshot(call.id, market.priceUsd, market.marketCapUsd ?? market.fdvUsd, market.liquidityUsd, now);
-    this.recordHolderSnapshot(input.chatId, input.scan);
-    if (result.changes > 0) this.recordTokenEvent({
+    await this.recordMarketSnapshot(call.id, market.priceUsd, market.marketCapUsd ?? market.fdvUsd, market.liquidityUsd, now);
+    await this.recordHolderSnapshot(input.chatId, input.scan);
+    if (result.changes > 0) await this.recordTokenEvent({
       chatId: input.chatId,
       tokenAddress: input.scan.token.address,
       symbol: input.scan.token.symbol,
@@ -558,25 +562,25 @@ export class Store {
     return { call, created: result.changes > 0 };
   }
 
-  getCall(chatId: string, tokenAddress: Address): CallRecord | null {
-    const row = this.db.prepare("SELECT * FROM calls WHERE chat_id = ? AND token_address = ?")
+  async getCall(chatId: string, tokenAddress: Address): Promise<CallRecord | null> {
+    const row = await this.db.prepare("SELECT * FROM calls WHERE chat_id = ? AND token_address = ?")
       .get(chatId, tokenAddress.toLowerCase()) as CallRow | undefined;
     return row ? mapCall(row) : null;
   }
 
-  listCalls(chatId: string, limit = 10): CallRecord[] {
-    const rows = this.db.prepare("SELECT * FROM calls WHERE chat_id = ? ORDER BY called_at DESC LIMIT ?")
+  async listCalls(chatId: string, limit = 10): Promise<CallRecord[]> {
+    const rows = await this.db.prepare("SELECT * FROM calls WHERE chat_id = ? ORDER BY called_at DESC LIMIT ?")
       .all(chatId, limit) as unknown as CallRow[];
     return rows.map(mapCall);
   }
 
-  listAllCalls(): CallRecord[] {
-    const rows = this.db.prepare("SELECT * FROM calls ORDER BY called_at DESC").all() as unknown as CallRow[];
+  async listAllCalls(): Promise<CallRecord[]> {
+    const rows = await this.db.prepare("SELECT * FROM calls ORDER BY called_at DESC").all() as unknown as CallRow[];
     return rows.map(mapCall);
   }
 
-  updateCallAth(callId: number, priceUsd: number | null, marketCapUsd: number | null): void {
-    this.updateCallMarket(callId, {
+  async updateCallAth(callId: number, priceUsd: number | null, marketCapUsd: number | null): Promise<void> {
+    await this.updateCallMarket(callId, {
       priceUsd,
       marketCapUsd,
       liquidityUsd: null,
@@ -585,15 +589,15 @@ export class Store {
     });
   }
 
-  updateCallMarket(callId: number, input: {
+  async updateCallMarket(callId: number, input: {
     priceUsd: number | null;
     marketCapUsd: number | null;
     liquidityUsd: number | null;
     dexPaid: boolean | null;
     incrementScan?: boolean;
-  }): CallRecord | null {
+  }): Promise<CallRecord | null> {
     const now = Date.now();
-    this.db.prepare(`
+    await this.db.prepare(`
       UPDATE calls SET
         ath_price_usd = CASE WHEN ? IS NOT NULL AND (ath_price_usd IS NULL OR ? > ath_price_usd) THEN ? ELSE ath_price_usd END,
         ath_market_cap_usd = CASE WHEN ? IS NOT NULL AND (ath_market_cap_usd IS NULL OR ? > ath_market_cap_usd) THEN ? ELSE ath_market_cap_usd END,
@@ -613,12 +617,12 @@ export class Store {
       input.incrementScan ? 1 : 0,
       now, now, callId,
     );
-    this.recordMarketSnapshot(callId, input.priceUsd, input.marketCapUsd, input.liquidityUsd, now);
-    return this.getCallById(callId);
+    await this.recordMarketSnapshot(callId, input.priceUsd, input.marketCapUsd, input.liquidityUsd, now);
+    return await this.getCallById(callId);
   }
 
-  marketHistory(callId: number, limit = 288): MarketHistoryPoint[] {
-    const rows = this.db.prepare(`
+  async marketHistory(callId: number, limit = 288): Promise<MarketHistoryPoint[]> {
+    const rows = await this.db.prepare(`
       SELECT captured_at, price_usd, market_cap_usd, liquidity_usd FROM (
         SELECT captured_at, price_usd, market_cap_usd, liquidity_usd
         FROM market_snapshots WHERE call_id = ? ORDER BY captured_at DESC LIMIT ?
@@ -627,14 +631,14 @@ export class Store {
     return rows.map((row) => ({ capturedAt: row.captured_at, priceUsd: row.price_usd, marketCapUsd: row.market_cap_usd, liquidityUsd: row.liquidity_usd }));
   }
 
-  realAlphaLeaderboard(chatId: string, limit = 10): CallRecord[] {
-    const calls = this.listCalls(chatId, 10_000).filter((call) => call.entryMarketCapUsd && call.lastMarketCapUsd && call.entryLiquidityUsd && call.lastLiquidityUsd);
+  async realAlphaLeaderboard(chatId: string, limit = 10): Promise<CallRecord[]> {
+    const calls = (await this.listCalls(chatId, 10_000)).filter((call) => call.entryMarketCapUsd && call.lastMarketCapUsd && call.entryLiquidityUsd && call.lastLiquidityUsd);
     return calls.sort((a, b) => realAlphaMultiple(b) - realAlphaMultiple(a)).slice(0, limit);
   }
 
-  private recordMarketSnapshot(callId: number, priceUsd: number | null, marketCapUsd: number | null, liquidityUsd: number | null, capturedAt: number): void {
+  private async recordMarketSnapshot(callId: number, priceUsd: number | null, marketCapUsd: number | null, liquidityUsd: number | null, capturedAt: number): Promise<void> {
     const bucket = Math.floor(capturedAt / 300_000);
-    this.db.prepare(`
+    await this.db.prepare(`
       INSERT INTO market_snapshots(call_id, bucket, captured_at, price_usd, market_cap_usd, liquidity_usd)
       VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(call_id, bucket) DO UPDATE SET
@@ -645,25 +649,25 @@ export class Store {
     `).run(callId, bucket, capturedAt, priceUsd, marketCapUsd, liquidityUsd);
   }
 
-  getCallById(callId: number): CallRecord | null {
-    const row = this.db.prepare("SELECT * FROM calls WHERE id = ?").get(callId) as CallRow | undefined;
+  async getCallById(callId: number): Promise<CallRecord | null> {
+    const row = await this.db.prepare("SELECT * FROM calls WHERE id = ?").get(callId) as CallRow | undefined;
     return row ? mapCall(row) : null;
   }
 
-  setLastAthAlert(callId: number, marketCapUsd: number): void {
-    this.db.prepare("UPDATE calls SET last_ath_alert_market_cap_usd = ?, updated_at = ? WHERE id = ?")
+  async setLastAthAlert(callId: number, marketCapUsd: number): Promise<void> {
+    await this.db.prepare("UPDATE calls SET last_ath_alert_market_cap_usd = ?, updated_at = ? WHERE id = ?")
       .run(marketCapUsd, Date.now(), callId);
   }
 
-  claimCallAlert(callId: number, eventKey: string): boolean {
-    const result = this.db.prepare(`
+  async claimCallAlert(callId: number, eventKey: string): Promise<boolean> {
+    const result = await this.db.prepare(`
       INSERT OR IGNORE INTO call_alert_events(call_id, event_key, created_at) VALUES (?, ?, ?)
     `).run(callId, eventKey, Date.now());
     return result.changes > 0;
   }
 
-  leaderboard(chatId: string, limit = 10): CallRecord[] {
-    const rows = this.db.prepare(`
+  async leaderboard(chatId: string, limit = 10): Promise<CallRecord[]> {
+    const rows = await this.db.prepare(`
       SELECT * FROM calls
       WHERE chat_id = ? AND entry_market_cap_usd > 0 AND ath_market_cap_usd IS NOT NULL
       ORDER BY (ath_market_cap_usd / entry_market_cap_usd) DESC
@@ -672,14 +676,14 @@ export class Store {
     return rows.map(mapCall);
   }
 
-  activeCalls(chatId: string, limit = 10): CallRecord[] {
-    const calls = this.listCalls(chatId, 200).filter((call) => call.entryMarketCapUsd && call.lastMarketCapUsd);
+  async activeCalls(chatId: string, limit = 10): Promise<CallRecord[]> {
+    const calls = (await this.listCalls(chatId, 200)).filter((call) => call.entryMarketCapUsd && call.lastMarketCapUsd);
     return calls.sort((a, b) => currentMultiple(b) - currentMultiple(a)).slice(0, limit);
   }
 
-  callerStats(chatId: string): CallerStats[] {
+  async callerStats(chatId: string): Promise<CallerStats[]> {
     const grouped = new Map<string, CallRecord[]>();
-    for (const call of this.listCalls(chatId, 10_000)) {
+    for (const call of await this.listCalls(chatId, 10_000)) {
       const key = call.userId;
       grouped.set(key, [...(grouped.get(key) ?? []), call]);
     }
@@ -712,9 +716,9 @@ export class Store {
     }).sort((a, b) => (b.bestMultiple ?? 0) - (a.bestMultiple ?? 0));
   }
 
-  syncSecurityWatchers(chatId: string, scan: TokenScan): void {
+  async syncSecurityWatchers(chatId: string, scan: TokenScan): Promise<void> {
     const now = Date.now();
-    const insert = this.db.prepare(`
+    const insert = await this.db.prepare(`
       INSERT INTO security_wallets(chat_id, token_address, symbol, wallet_address, kind, holding_percent, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(chat_id, token_address, wallet_address, kind)
@@ -726,13 +730,13 @@ export class Store {
     }
   }
 
-  securityWatchedAddressSet(): Set<string> {
-    const rows = this.db.prepare("SELECT DISTINCT wallet_address FROM security_wallets").all() as Array<{ wallet_address: string }>;
+  async securityWatchedAddressSet(): Promise<Set<string>> {
+    const rows = await this.db.prepare("SELECT DISTINCT wallet_address FROM security_wallets").all() as Array<{ wallet_address: string }>;
     return new Set(rows.map((row) => row.wallet_address.toLowerCase()));
   }
 
-  findSecurityWallets(address: Address): SecurityWalletWatch[] {
-    const rows = this.db.prepare("SELECT * FROM security_wallets WHERE wallet_address = ?")
+  async findSecurityWallets(address: Address): Promise<SecurityWalletWatch[]> {
+    const rows = await this.db.prepare("SELECT * FROM security_wallets WHERE wallet_address = ?")
       .all(address.toLowerCase()) as Array<{ chat_id: string; token_address: string; symbol: string; wallet_address: string; kind: "DEV" | "WHALE"; holding_percent: number | null }>;
     return rows.map((row) => ({
       chatId: row.chat_id,
@@ -744,85 +748,85 @@ export class Store {
     }));
   }
 
-  chatAllowsAlert(chatId: string, kind: "dev" | "whale"): boolean {
-    const settings = this.getChatSettings(chatId);
+  async chatAllowsAlert(chatId: string, kind: "dev" | "whale"): Promise<boolean> {
+    const settings = await this.getChatSettings(chatId);
     return kind === "dev" ? settings.devAlerts : settings.whaleAlerts;
   }
 
-  upsertKol(label: string, address: Address): void {
-    this.db.prepare(`
+  async upsertKol(label: string, address: Address): Promise<void> {
+    await this.db.prepare(`
       INSERT INTO tracked_wallets(scope, chat_id, telegram_user_id, address, label, is_kol, enabled, created_at)
       VALUES ('global', NULL, NULL, ?, ?, 1, 1, ?)
       ON CONFLICT(scope, address) DO UPDATE SET label = excluded.label, enabled = 1
     `).run(address.toLowerCase(), label, Date.now());
   }
 
-  addWallet(chatId: string, userId: string, address: Address, label: string): TrackedWallet {
+  async addWallet(chatId: string, userId: string, address: Address, label: string): Promise<TrackedWallet> {
     const scope = `chat:${chatId}`;
-    this.db.prepare(`
+    await this.db.prepare(`
       INSERT INTO tracked_wallets(scope, chat_id, telegram_user_id, address, label, is_kol, enabled, created_at)
       VALUES (?, ?, ?, ?, ?, 0, 1, ?)
       ON CONFLICT(scope, address) DO UPDATE SET label = excluded.label, enabled = 1, telegram_user_id = excluded.telegram_user_id
     `).run(scope, chatId, userId, address.toLowerCase(), label, Date.now());
-    const row = this.db.prepare("SELECT * FROM tracked_wallets WHERE scope = ? AND address = ?")
+    const row = await this.db.prepare("SELECT * FROM tracked_wallets WHERE scope = ? AND address = ?")
       .get(scope, address.toLowerCase()) as unknown as WalletRow;
     return mapWallet(row);
   }
 
-  removeWallet(chatId: string, address: Address): boolean {
-    const result = this.db.prepare("DELETE FROM tracked_wallets WHERE scope = ? AND address = ?")
+  async removeWallet(chatId: string, address: Address): Promise<boolean> {
+    const result = await this.db.prepare("DELETE FROM tracked_wallets WHERE scope = ? AND address = ?")
       .run(`chat:${chatId}`, address.toLowerCase());
     return result.changes > 0;
   }
 
-  renameWallet(chatId: string, address: Address, label: string): boolean {
-    const result = this.db.prepare(`
+  async renameWallet(chatId: string, address: Address, label: string): Promise<boolean> {
+    const result = await this.db.prepare(`
       UPDATE tracked_wallets SET label = ?
       WHERE scope = ? AND address = ? AND enabled = 1
     `).run(label, `chat:${chatId}`, address.toLowerCase());
     return result.changes > 0;
   }
 
-  countCustomWallets(chatId: string): number {
-    const row = this.db.prepare("SELECT COUNT(*) AS count FROM tracked_wallets WHERE scope = ?")
+  async countCustomWallets(chatId: string): Promise<number> {
+    const row = await this.db.prepare("SELECT COUNT(*) AS count FROM tracked_wallets WHERE scope = ?")
       .get(`chat:${chatId}`) as { count: number };
     return row.count;
   }
 
-  listWallets(chatId?: string): TrackedWallet[] {
+  async listWallets(chatId?: string): Promise<TrackedWallet[]> {
     const rows = chatId
-      ? this.db.prepare("SELECT * FROM tracked_wallets WHERE scope IN ('global', ?) AND enabled = 1 ORDER BY is_kol DESC, label")
+      ? await this.db.prepare("SELECT * FROM tracked_wallets WHERE scope IN ('global', ?) AND enabled = 1 ORDER BY is_kol DESC, label")
         .all(`chat:${chatId}`)
-      : this.db.prepare("SELECT * FROM tracked_wallets WHERE enabled = 1 ORDER BY is_kol DESC, label").all();
+      : await this.db.prepare("SELECT * FROM tracked_wallets WHERE enabled = 1 ORDER BY is_kol DESC, label").all();
     return (rows as unknown as WalletRow[]).map(mapWallet);
   }
 
-  findWallets(address: Address): TrackedWallet[] {
-    const rows = this.db.prepare("SELECT * FROM tracked_wallets WHERE address = ? AND enabled = 1")
+  async findWallets(address: Address): Promise<TrackedWallet[]> {
+    const rows = await this.db.prepare("SELECT * FROM tracked_wallets WHERE address = ? AND enabled = 1")
       .all(address.toLowerCase()) as unknown as WalletRow[];
     return rows.map(mapWallet);
   }
 
-  trackedAddressSet(): Set<string> {
-    const rows = this.db.prepare("SELECT DISTINCT address FROM tracked_wallets WHERE enabled = 1").all() as Array<{ address: string }>;
+  async trackedAddressSet(): Promise<Set<string>> {
+    const rows = await this.db.prepare("SELECT DISTINCT address FROM tracked_wallets WHERE enabled = 1").all() as Array<{ address: string }>;
     return new Set(rows.map((row) => row.address.toLowerCase()));
   }
 
-  listKolAlertChats(): string[] {
-    const rows = this.db.prepare("SELECT chat_id FROM chats WHERE kol_alerts = 1").all() as Array<{ chat_id: string }>;
+  async listKolAlertChats(): Promise<string[]> {
+    const rows = await this.db.prepare("SELECT chat_id FROM chats WHERE kol_alerts = 1").all() as Array<{ chat_id: string }>;
     return rows.map((row) => row.chat_id);
   }
 
-  claimAlert(txHash: string, walletAddress: Address, chatId: string): boolean {
-    const result = this.db.prepare(`
+  async claimAlert(txHash: string, walletAddress: Address, chatId: string): Promise<boolean> {
+    const result = await this.db.prepare(`
       INSERT OR IGNORE INTO alert_events(tx_hash, wallet_address, chat_id, created_at)
       VALUES (?, ?, ?, ?)
     `).run(txHash.toLowerCase(), walletAddress.toLowerCase(), chatId, Date.now());
     return result.changes > 0;
   }
 
-  recordWalletMovement(input: Omit<WalletMovementRecord, "id">): boolean {
-    const result = this.db.prepare(`INSERT OR IGNORE INTO wallet_movements(
+  async recordWalletMovement(input: Omit<WalletMovementRecord, "id">): Promise<boolean> {
+    const result = await this.db.prepare(`INSERT OR IGNORE INTO wallet_movements(
       chat_id, wallet_address, wallet_label, tx_hash, direction, token_address, symbol,
       token_amount, value_usd, price_usd, market_cap_usd, liquidity_usd, occurred_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
@@ -833,17 +837,17 @@ export class Store {
     return result.changes > 0;
   }
 
-  listWalletMovements(chatId: string, walletAddress?: Address, since?: number): WalletMovementRecord[] {
+  async listWalletMovements(chatId: string, walletAddress?: Address, since?: number): Promise<WalletMovementRecord[]> {
     const clauses = ["chat_id = ?"];
     const values: Array<string | number> = [chatId];
     if (walletAddress) { clauses.push("wallet_address = ?"); values.push(walletAddress.toLowerCase()); }
     if (since) { clauses.push("occurred_at >= ?"); values.push(since); }
-    const rows = this.db.prepare(`SELECT * FROM wallet_movements WHERE ${clauses.join(" AND ")} ORDER BY occurred_at ASC, id ASC`).all(...values) as Array<Record<string, unknown>>;
+    const rows = await this.db.prepare(`SELECT * FROM wallet_movements WHERE ${clauses.join(" AND ")} ORDER BY occurred_at ASC, id ASC`).all(...values) as Array<Record<string, unknown>>;
     return rows.map(mapWalletMovement);
   }
 
-  walletPortfolio(chatId: string, walletAddress?: Address): WalletPortfolioPosition[] {
-    const records = this.listWalletMovements(chatId, walletAddress);
+  async walletPortfolio(chatId: string, walletAddress?: Address): Promise<WalletPortfolioPosition[]> {
+    const records = await this.listWalletMovements(chatId, walletAddress);
     const positions = new Map<string, WalletPortfolioPosition>();
     for (const item of records) {
       if (item.direction === "TRANSFER") continue;
@@ -870,8 +874,8 @@ export class Store {
     }));
   }
 
-  smartWalletScore(chatId: string, walletAddress: Address): SmartWalletScore | null {
-    const rows = this.listWalletMovements(chatId, walletAddress).filter((item) => item.direction !== "TRANSFER");
+  async smartWalletScore(chatId: string, walletAddress: Address): Promise<SmartWalletScore | null> {
+    const rows = (await this.listWalletMovements(chatId, walletAddress)).filter((item) => item.direction !== "TRANSFER");
     if (!rows.length) return null;
     let sells = 0, profitableSells = 0, volume = 0, realizedPnlUsd = 0;
     const ledgers = new Map<string, { amount: number; cost: number }>();
@@ -901,237 +905,237 @@ export class Store {
     return { walletAddress, label: rows.at(-1)?.walletLabel ?? walletAddress, score, grade: score >= 80 ? "A" : score >= 65 ? "B" : score >= 45 ? "C" : "D", trades: rows.length, sells, profitableSells, winRate, realizedPnlUsd, volumeUsd: volume };
   }
 
-  addAlertRule(input: Omit<CustomAlertRule, "id" | "enabled" | "createdAt">): CustomAlertRule {
+  async addAlertRule(input: Omit<CustomAlertRule, "id" | "enabled" | "createdAt">): Promise<CustomAlertRule> {
     const now = Date.now();
-    const result = this.db.prepare(`INSERT INTO custom_alert_rules(chat_id,name,direction,min_value_usd,min_market_cap_usd,max_market_cap_usd,min_liquidity_usd,min_wallets,window_minutes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
+    const result = await this.db.prepare(`INSERT INTO custom_alert_rules(chat_id,name,direction,min_value_usd,min_market_cap_usd,max_market_cap_usd,min_liquidity_usd,min_wallets,window_minutes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
       input.chatId, input.name, input.direction, input.minValueUsd, input.minMarketCapUsd, input.maxMarketCapUsd, input.minLiquidityUsd, input.minWallets, input.windowMinutes, now,
     );
-    return this.listAlertRules(input.chatId).find((item) => item.id === Number(result.lastInsertRowid))!;
+    return (await this.listAlertRules(input.chatId)).find((item) => item.id === Number(result.lastInsertRowid))!;
   }
 
-  listAlertRules(chatId: string): CustomAlertRule[] {
-    const rows = this.db.prepare("SELECT * FROM custom_alert_rules WHERE chat_id = ? ORDER BY id").all(chatId) as Array<Record<string, unknown>>;
+  async listAlertRules(chatId: string): Promise<CustomAlertRule[]> {
+    const rows = await this.db.prepare("SELECT * FROM custom_alert_rules WHERE chat_id = ? ORDER BY id").all(chatId) as Array<Record<string, unknown>>;
     return rows.map((row) => ({ id: Number(row.id), chatId: String(row.chat_id), name: String(row.name), direction: String(row.direction) as CustomAlertRule["direction"], minValueUsd: Number(row.min_value_usd), minMarketCapUsd: Number(row.min_market_cap_usd), maxMarketCapUsd: row.max_market_cap_usd == null ? null : Number(row.max_market_cap_usd), minLiquidityUsd: Number(row.min_liquidity_usd), minWallets: Number(row.min_wallets), windowMinutes: Number(row.window_minutes), enabled: Boolean(row.enabled), createdAt: Number(row.created_at) }));
   }
 
-  removeAlertRule(chatId: string, id: number): boolean {
-    return this.db.prepare("DELETE FROM custom_alert_rules WHERE chat_id = ? AND id = ?").run(chatId, id).changes > 0;
+  async removeAlertRule(chatId: string, id: number): Promise<boolean> {
+    return (await this.db.prepare("DELETE FROM custom_alert_rules WHERE chat_id = ? AND id = ?").run(chatId, id)).changes > 0;
   }
 
-  claimCustomAlert(rule: CustomAlertRule, tokenAddress: Address, now = Date.now()): boolean {
+  async claimCustomAlert(rule: CustomAlertRule, tokenAddress: Address, now = Date.now()): Promise<boolean> {
     const bucket = Math.floor(now / (rule.windowMinutes * 60_000));
-    return this.db.prepare("INSERT OR IGNORE INTO custom_alert_events(rule_id,token_address,bucket,created_at) VALUES (?,?,?,?)").run(rule.id, tokenAddress.toLowerCase(), bucket, now).changes > 0;
+    return (await this.db.prepare("INSERT OR IGNORE INTO custom_alert_events(rule_id,token_address,bucket,created_at) VALUES (?,?,?,?)").run(rule.id, tokenAddress.toLowerCase(), bucket, now)).changes > 0;
   }
 
-  matchingWalletCount(chatId: string, tokenAddress: Address, since: number, direction: CustomAlertRule["direction"]): number {
-    const row = this.db.prepare(`SELECT COUNT(DISTINCT wallet_address) AS count FROM wallet_movements WHERE chat_id = ? AND token_address = ? AND occurred_at >= ? AND (? = 'ANY' OR direction = ?)`)
+  async matchingWalletCount(chatId: string, tokenAddress: Address, since: number, direction: CustomAlertRule["direction"]): Promise<number> {
+    const row = await this.db.prepare(`SELECT COUNT(DISTINCT wallet_address) AS count FROM wallet_movements WHERE chat_id = ? AND token_address = ? AND occurred_at >= ? AND (? = 'ANY' OR direction = ?)`)
       .get(chatId, tokenAddress.toLowerCase(), since, direction, direction) as { count: number };
     return row.count;
   }
 
-  recordHolderSnapshot(chatId: string, scan: TokenScan): void {
+  async recordHolderSnapshot(chatId: string, scan: TokenScan): Promise<void> {
     const now = Date.now();
     const bucket = Math.floor(now / 900_000);
-    this.db.prepare(`INSERT INTO holder_snapshots(chat_id,token_address,bucket,captured_at,holders_count,top10_percent,holders_json) VALUES (?,?,?,?,?,?,?) ON CONFLICT(chat_id,token_address,bucket) DO UPDATE SET captured_at=excluded.captured_at,holders_count=excluded.holders_count,top10_percent=excluded.top10_percent,holders_json=excluded.holders_json`).run(
+    await this.db.prepare(`INSERT INTO holder_snapshots(chat_id,token_address,bucket,captured_at,holders_count,top10_percent,holders_json) VALUES (?,?,?,?,?,?,?) ON CONFLICT(chat_id,token_address,bucket) DO UPDATE SET captured_at=excluded.captured_at,holders_count=excluded.holders_count,top10_percent=excluded.top10_percent,holders_json=excluded.holders_json`).run(
       chatId, scan.token.address.toLowerCase(), bucket, now, scan.token.holdersCount, scan.holders.top10Percent,
       JSON.stringify(scan.holders.holders),
     );
   }
 
-  holderSnapshots(chatId: string, tokenAddress: Address, limit = 96): HolderSnapshot[] {
-    const rows = this.db.prepare("SELECT * FROM holder_snapshots WHERE chat_id = ? AND token_address = ? ORDER BY captured_at DESC LIMIT ?").all(chatId, tokenAddress.toLowerCase(), limit) as Array<Record<string, unknown>>;
+  async holderSnapshots(chatId: string, tokenAddress: Address, limit = 96): Promise<HolderSnapshot[]> {
+    const rows = await this.db.prepare("SELECT * FROM holder_snapshots WHERE chat_id = ? AND token_address = ? ORDER BY captured_at DESC LIMIT ?").all(chatId, tokenAddress.toLowerCase(), limit) as Array<Record<string, unknown>>;
     return rows.reverse().map((row) => ({ capturedAt: Number(row.captured_at), holdersCount: row.holders_count == null ? null : Number(row.holders_count), top10Percent: row.top10_percent == null ? null : Number(row.top10_percent), holders: JSON.parse(String(row.holders_json)) as HolderSnapshot["holders"] }));
   }
 
-  recordTokenEvent(input: Omit<TokenEvent, "id" | "createdAt"> & { createdAt?: number }): void {
-    this.db.prepare("INSERT INTO token_events(chat_id,token_address,symbol,kind,title,tx_hash,value_usd,created_at) VALUES (?,?,?,?,?,?,?,?)").run(input.chatId, input.tokenAddress.toLowerCase(), input.symbol, input.kind, input.title, input.txHash?.toLowerCase() ?? null, input.valueUsd, input.createdAt ?? Date.now());
+  async recordTokenEvent(input: Omit<TokenEvent, "id" | "createdAt"> & { createdAt?: number }): Promise<void> {
+    await this.db.prepare("INSERT INTO token_events(chat_id,token_address,symbol,kind,title,tx_hash,value_usd,created_at) VALUES (?,?,?,?,?,?,?,?)").run(input.chatId, input.tokenAddress.toLowerCase(), input.symbol, input.kind, input.title, input.txHash?.toLowerCase() ?? null, input.valueUsd, input.createdAt ?? Date.now());
   }
 
-  tokenTimeline(chatId: string, tokenAddress: Address, limit = 20): TokenEvent[] {
-    const rows = this.db.prepare("SELECT * FROM token_events WHERE chat_id = ? AND token_address = ? ORDER BY created_at DESC LIMIT ?").all(chatId, tokenAddress.toLowerCase(), limit) as Array<Record<string, unknown>>;
+  async tokenTimeline(chatId: string, tokenAddress: Address, limit = 20): Promise<TokenEvent[]> {
+    const rows = await this.db.prepare("SELECT * FROM token_events WHERE chat_id = ? AND token_address = ? ORDER BY created_at DESC LIMIT ?").all(chatId, tokenAddress.toLowerCase(), limit) as Array<Record<string, unknown>>;
     return rows.map(mapTokenEvent);
   }
 
-  recentTokenEvents(chatId: string, since: number, limit = 100): TokenEvent[] {
-    const rows = this.db.prepare("SELECT * FROM token_events WHERE chat_id = ? AND created_at >= ? ORDER BY created_at DESC LIMIT ?").all(chatId, since, limit) as Array<Record<string, unknown>>;
+  async recentTokenEvents(chatId: string, since: number, limit = 100): Promise<TokenEvent[]> {
+    const rows = await this.db.prepare("SELECT * FROM token_events WHERE chat_id = ? AND created_at >= ? ORDER BY created_at DESC LIMIT ?").all(chatId, since, limit) as Array<Record<string, unknown>>;
     return rows.map(mapTokenEvent);
   }
 
-  paperBuy(chatId: string, userId: string, tokenAddress: Address, symbol: string, valueUsd: number, priceUsd: number): PaperPosition {
+  async paperBuy(chatId: string, userId: string, tokenAddress: Address, symbol: string, valueUsd: number, priceUsd: number): Promise<PaperPosition> {
     const amount = valueUsd / priceUsd;
     const now = Date.now();
-    this.db.prepare(`INSERT INTO paper_positions(chat_id,user_id,token_address,symbol,token_amount,cost_basis_usd,average_entry_price_usd,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(chat_id,user_id,token_address) DO UPDATE SET symbol=excluded.symbol,token_amount=token_amount+excluded.token_amount,cost_basis_usd=cost_basis_usd+excluded.cost_basis_usd,average_entry_price_usd=(cost_basis_usd+excluded.cost_basis_usd)/(token_amount+excluded.token_amount),updated_at=excluded.updated_at`).run(chatId,userId,tokenAddress.toLowerCase(),symbol,amount,valueUsd,priceUsd,now);
-    this.db.prepare("INSERT INTO paper_trades(chat_id,user_id,token_address,symbol,side,token_amount,value_usd,price_usd,created_at) VALUES (?,?,?,?,?,?,?,?,?)").run(chatId,userId,tokenAddress.toLowerCase(),symbol,"BUY",amount,valueUsd,priceUsd,now);
-    return this.paperPosition(chatId,userId,tokenAddress)!;
+    await this.db.prepare(`INSERT INTO paper_positions(chat_id,user_id,token_address,symbol,token_amount,cost_basis_usd,average_entry_price_usd,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(chat_id,user_id,token_address) DO UPDATE SET symbol=excluded.symbol,token_amount=token_amount+excluded.token_amount,cost_basis_usd=cost_basis_usd+excluded.cost_basis_usd,average_entry_price_usd=(cost_basis_usd+excluded.cost_basis_usd)/(token_amount+excluded.token_amount),updated_at=excluded.updated_at`).run(chatId,userId,tokenAddress.toLowerCase(),symbol,amount,valueUsd,priceUsd,now);
+    await this.db.prepare("INSERT INTO paper_trades(chat_id,user_id,token_address,symbol,side,token_amount,value_usd,price_usd,created_at) VALUES (?,?,?,?,?,?,?,?,?)").run(chatId,userId,tokenAddress.toLowerCase(),symbol,"BUY",amount,valueUsd,priceUsd,now);
+    return (await this.paperPosition(chatId,userId,tokenAddress))!;
   }
 
-  paperSell(chatId: string, userId: string, tokenAddress: Address, fraction: number, priceUsd: number): PaperPosition | null {
-    const current = this.paperPosition(chatId,userId,tokenAddress);
+  async paperSell(chatId: string, userId: string, tokenAddress: Address, fraction: number, priceUsd: number): Promise<PaperPosition | null> {
+    const current = await this.paperPosition(chatId,userId,tokenAddress);
     if (!current || current.tokenAmount <= 0) return null;
     const safeFraction = Math.max(0.0001, Math.min(1, fraction));
     const amount = current.tokenAmount * safeFraction;
     const proceeds = amount * priceUsd;
     const basis = current.costBasisUsd * safeFraction;
     const now = Date.now();
-    this.db.prepare("UPDATE paper_positions SET token_amount=token_amount-?,cost_basis_usd=cost_basis_usd-?,realized_pnl_usd=realized_pnl_usd+?,updated_at=? WHERE chat_id=? AND user_id=? AND token_address=?").run(amount,basis,proceeds-basis,now,chatId,userId,tokenAddress.toLowerCase());
-    this.db.prepare("INSERT INTO paper_trades(chat_id,user_id,token_address,symbol,side,token_amount,value_usd,price_usd,created_at) VALUES (?,?,?,?,?,?,?,?,?)").run(chatId,userId,tokenAddress.toLowerCase(),current.symbol,"SELL",amount,proceeds,priceUsd,now);
-    return this.paperPosition(chatId,userId,tokenAddress);
+    await this.db.prepare("UPDATE paper_positions SET token_amount=token_amount-?,cost_basis_usd=cost_basis_usd-?,realized_pnl_usd=realized_pnl_usd+?,updated_at=? WHERE chat_id=? AND user_id=? AND token_address=?").run(amount,basis,proceeds-basis,now,chatId,userId,tokenAddress.toLowerCase());
+    await this.db.prepare("INSERT INTO paper_trades(chat_id,user_id,token_address,symbol,side,token_amount,value_usd,price_usd,created_at) VALUES (?,?,?,?,?,?,?,?,?)").run(chatId,userId,tokenAddress.toLowerCase(),current.symbol,"SELL",amount,proceeds,priceUsd,now);
+    return await this.paperPosition(chatId,userId,tokenAddress);
   }
 
-  paperPositions(chatId: string, userId: string): PaperPosition[] {
-    const rows = this.db.prepare("SELECT * FROM paper_positions WHERE chat_id=? AND user_id=? AND token_amount > 0.000000001 ORDER BY updated_at DESC").all(chatId,userId) as Array<Record<string, unknown>>;
+  async paperPositions(chatId: string, userId: string): Promise<PaperPosition[]> {
+    const rows = await this.db.prepare("SELECT * FROM paper_positions WHERE chat_id=? AND user_id=? AND token_amount > 0.000000001 ORDER BY updated_at DESC").all(chatId,userId) as Array<Record<string, unknown>>;
     return rows.map(mapPaperPosition);
   }
 
-  paperPosition(chatId: string, userId: string, tokenAddress: Address): PaperPosition | null {
-    const row = this.db.prepare("SELECT * FROM paper_positions WHERE chat_id=? AND user_id=? AND token_address=?").get(chatId,userId,tokenAddress.toLowerCase()) as Record<string, unknown> | undefined;
+  async paperPosition(chatId: string, userId: string, tokenAddress: Address): Promise<PaperPosition | null> {
+    const row = await this.db.prepare("SELECT * FROM paper_positions WHERE chat_id=? AND user_id=? AND token_address=?").get(chatId,userId,tokenAddress.toLowerCase()) as Record<string, unknown> | undefined;
     return row ? mapPaperPosition(row) : null;
   }
 
-  createPaperCompetition(input: { chatId:string; name:string; startingBalanceUsd:number; durationDays:number; createdBy:string }): PaperCompetition {
-    const existing=this.activePaperCompetition(input.chatId);
+  async createPaperCompetition(input: { chatId:string; name:string; startingBalanceUsd:number; durationDays:number; createdBy:string }): Promise<PaperCompetition> {
+    const existing=await this.activePaperCompetition(input.chatId);
     if(existing)throw new Error(`A competition is already active: ${existing.name}`);
     const now=Date.now();
     const balance=Math.max(100,Math.min(10_000_000,input.startingBalanceUsd));
     const duration=Math.max(1,Math.min(90,input.durationDays));
-    const result=this.db.prepare("INSERT INTO paper_competitions(chat_id,name,starting_balance_usd,starts_at,ends_at,status,created_by,created_at) VALUES (?,?,?,?,?,'ACTIVE',?,?)").run(input.chatId,input.name.slice(0,48),balance,now,now+duration*86_400_000,input.createdBy,now);
-    return this.paperCompetitionById(Number(result.lastInsertRowid))!;
+    const result=await this.db.prepare("INSERT INTO paper_competitions(chat_id,name,starting_balance_usd,starts_at,ends_at,status,created_by,created_at) VALUES (?,?,?,?,?,'ACTIVE',?,?)").run(input.chatId,input.name.slice(0,48),balance,now,now+duration*86_400_000,input.createdBy,now);
+    return (await this.paperCompetitionById(Number(result.lastInsertRowid)))!;
   }
 
-  activePaperCompetition(chatId:string):PaperCompetition|null{
-    const row=this.db.prepare("SELECT * FROM paper_competitions WHERE chat_id=? AND status='ACTIVE' AND ends_at>? ORDER BY created_at DESC LIMIT 1").get(chatId,Date.now()) as Record<string,unknown>|undefined;
+  async activePaperCompetition(chatId:string): Promise<PaperCompetition|null> {
+    const row=await this.db.prepare("SELECT * FROM paper_competitions WHERE chat_id=? AND status='ACTIVE' AND ends_at>? ORDER BY created_at DESC LIMIT 1").get(chatId,Date.now()) as Record<string,unknown>|undefined;
     return row?mapPaperCompetition(row):null;
   }
 
-  latestPaperCompetition(chatId:string):PaperCompetition|null{
-    const row=this.db.prepare("SELECT * FROM paper_competitions WHERE chat_id=? ORDER BY created_at DESC LIMIT 1").get(chatId) as Record<string,unknown>|undefined;
+  async latestPaperCompetition(chatId:string): Promise<PaperCompetition|null> {
+    const row=await this.db.prepare("SELECT * FROM paper_competitions WHERE chat_id=? ORDER BY created_at DESC LIMIT 1").get(chatId) as Record<string,unknown>|undefined;
     return row?mapPaperCompetition(row):null;
   }
 
-  paperCompetitionById(id:number):PaperCompetition|null{
-    const row=this.db.prepare("SELECT * FROM paper_competitions WHERE id=?").get(id) as Record<string,unknown>|undefined;
+  async paperCompetitionById(id:number): Promise<PaperCompetition|null> {
+    const row=await this.db.prepare("SELECT * FROM paper_competitions WHERE id=?").get(id) as Record<string,unknown>|undefined;
     return row?mapPaperCompetition(row):null;
   }
 
-  endPaperCompetition(chatId:string):PaperCompetition|null{
-    const competition=this.activePaperCompetition(chatId);if(!competition)return null;
-    this.db.prepare("UPDATE paper_competitions SET status='ENDED',ends_at=? WHERE id=?").run(Date.now(),competition.id);
-    return this.paperCompetitionById(competition.id);
+  async endPaperCompetition(chatId:string): Promise<PaperCompetition|null> {
+    const competition=await this.activePaperCompetition(chatId);if(!competition)return null;
+    await this.db.prepare("UPDATE paper_competitions SET status='ENDED',ends_at=? WHERE id=?").run(Date.now(),competition.id);
+    return await this.paperCompetitionById(competition.id);
   }
 
-  expiredActivePaperCompetitions(now=Date.now()):PaperCompetition[]{
-    const rows=this.db.prepare("SELECT * FROM paper_competitions WHERE status='ACTIVE' AND ends_at<=? ORDER BY ends_at ASC").all(now) as Array<Record<string,unknown>>;
+  async expiredActivePaperCompetitions(now=Date.now()): Promise<PaperCompetition[]> {
+    const rows=await this.db.prepare("SELECT * FROM paper_competitions WHERE status='ACTIVE' AND ends_at<=? ORDER BY ends_at ASC").all(now) as Array<Record<string,unknown>>;
     return rows.map(mapPaperCompetition);
   }
 
-  finalizePaperCompetition(competitionId:number,results:Array<{userId:string;equityUsd:number;pnlUsd:number;rank:number}>,endedAt=Date.now()):PaperCompetition|null{
-    this.db.exec("BEGIN IMMEDIATE");
+  async finalizePaperCompetition(competitionId:number,results:Array<{userId:string;equityUsd:number;pnlUsd:number;rank:number}>,endedAt=Date.now()): Promise<PaperCompetition|null> {
+    await this.db.exec("BEGIN IMMEDIATE");
     try{
-      const update=this.db.prepare("UPDATE paper_competition_accounts SET final_equity_usd=?,final_pnl_usd=?,final_rank=?,updated_at=? WHERE competition_id=? AND user_id=?");
+      const update=await this.db.prepare("UPDATE paper_competition_accounts SET final_equity_usd=?,final_pnl_usd=?,final_rank=?,updated_at=? WHERE competition_id=? AND user_id=?");
       for(const result of results)update.run(result.equityUsd,result.pnlUsd,result.rank,endedAt,competitionId,result.userId);
-      this.db.prepare("UPDATE paper_competitions SET status='ENDED',ends_at=MIN(ends_at,?) WHERE id=?").run(endedAt,competitionId);
-      this.db.exec("COMMIT");
-      return this.paperCompetitionById(competitionId);
-    }catch(error){this.db.exec("ROLLBACK");throw error;}
+      await this.db.prepare("UPDATE paper_competitions SET status='ENDED',ends_at=MIN(ends_at,?) WHERE id=?").run(endedAt,competitionId);
+      await this.db.exec("COMMIT");
+      return await this.paperCompetitionById(competitionId);
+    }catch(error){await this.db.exec("ROLLBACK");throw error;}
   }
 
-  joinPaperCompetition(competitionId:number,userId:string,username:string):PaperCompetitionAccount{
-    const competition=this.paperCompetitionById(competitionId);if(!competition||competition.status!=="ACTIVE"||competition.endsAt<=Date.now())throw new Error("This competition is no longer active.");
+  async joinPaperCompetition(competitionId:number,userId:string,username:string): Promise<PaperCompetitionAccount> {
+    const competition=await this.paperCompetitionById(competitionId);if(!competition||competition.status!=="ACTIVE"||competition.endsAt<=Date.now())throw new Error("This competition is no longer active.");
     const now=Date.now();
-    this.db.prepare(`INSERT INTO paper_competition_accounts(competition_id,user_id,username,cash_balance_usd,starting_balance_usd,joined_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(competition_id,user_id) DO UPDATE SET username=excluded.username,updated_at=excluded.updated_at`).run(competitionId,userId,username,competition.startingBalanceUsd,competition.startingBalanceUsd,now,now);
-    return this.paperCompetitionAccount(competitionId,userId)!;
+    await this.db.prepare(`INSERT INTO paper_competition_accounts(competition_id,user_id,username,cash_balance_usd,starting_balance_usd,joined_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(competition_id,user_id) DO UPDATE SET username=excluded.username,updated_at=excluded.updated_at`).run(competitionId,userId,username,competition.startingBalanceUsd,competition.startingBalanceUsd,now,now);
+    return (await this.paperCompetitionAccount(competitionId,userId))!;
   }
 
-  paperCompetitionAccount(competitionId:number,userId:string):PaperCompetitionAccount|null{
-    const row=this.db.prepare("SELECT * FROM paper_competition_accounts WHERE competition_id=? AND user_id=?").get(competitionId,userId) as Record<string,unknown>|undefined;
+  async paperCompetitionAccount(competitionId:number,userId:string): Promise<PaperCompetitionAccount|null> {
+    const row=await this.db.prepare("SELECT * FROM paper_competition_accounts WHERE competition_id=? AND user_id=?").get(competitionId,userId) as Record<string,unknown>|undefined;
     return row?mapPaperCompetitionAccount(row):null;
   }
 
-  paperCompetitionAccounts(competitionId:number,limit=100):PaperCompetitionAccount[]{
-    const rows=this.db.prepare("SELECT * FROM paper_competition_accounts WHERE competition_id=? ORDER BY joined_at ASC LIMIT ?").all(competitionId,limit) as Array<Record<string,unknown>>;
+  async paperCompetitionAccounts(competitionId:number,limit=100): Promise<PaperCompetitionAccount[]> {
+    const rows=await this.db.prepare("SELECT * FROM paper_competition_accounts WHERE competition_id=? ORDER BY joined_at ASC LIMIT ?").all(competitionId,limit) as Array<Record<string,unknown>>;
     return rows.map(mapPaperCompetitionAccount);
   }
 
-  paperCompetitionPositions(competitionId:number,userId:string):PaperCompetitionPosition[]{
-    const rows=this.db.prepare("SELECT * FROM paper_competition_positions WHERE competition_id=? AND user_id=? AND token_amount>0.000000000001 ORDER BY updated_at DESC").all(competitionId,userId) as Array<Record<string,unknown>>;
+  async paperCompetitionPositions(competitionId:number,userId:string): Promise<PaperCompetitionPosition[]> {
+    const rows=await this.db.prepare("SELECT * FROM paper_competition_positions WHERE competition_id=? AND user_id=? AND token_amount>0.000000000001 ORDER BY updated_at DESC").all(competitionId,userId) as Array<Record<string,unknown>>;
     return rows.map(mapPaperCompetitionPosition);
   }
 
-  paperCompetitionPosition(competitionId:number,userId:string,tokenAddress:Address):PaperCompetitionPosition|null{
-    const row=this.db.prepare("SELECT * FROM paper_competition_positions WHERE competition_id=? AND user_id=? AND token_address=?").get(competitionId,userId,tokenAddress.toLowerCase()) as Record<string,unknown>|undefined;
+  async paperCompetitionPosition(competitionId:number,userId:string,tokenAddress:Address): Promise<PaperCompetitionPosition|null> {
+    const row=await this.db.prepare("SELECT * FROM paper_competition_positions WHERE competition_id=? AND user_id=? AND token_address=?").get(competitionId,userId,tokenAddress.toLowerCase()) as Record<string,unknown>|undefined;
     return row?mapPaperCompetitionPosition(row):null;
   }
 
-  executeCompetitionBuy(input:{competitionId:number;userId:string;tokenAddress:Address;symbol:string;quote:PaperExecutionQuote;marketCapUsd:number|null}):PaperCompetitionPosition{
+  async executeCompetitionBuy(input:{competitionId:number;userId:string;tokenAddress:Address;symbol:string;quote:PaperExecutionQuote;marketCapUsd:number|null}): Promise<PaperCompetitionPosition> {
     const totalCost=input.quote.grossValueUsd+input.quote.gasCostUsd;
-    this.db.exec("BEGIN IMMEDIATE");
+    await this.db.exec("BEGIN IMMEDIATE");
     try{
-      const competition=this.paperCompetitionById(input.competitionId);if(!competition||competition.status!=="ACTIVE"||competition.endsAt<=Date.now())throw new Error("Competition trading has ended.");
-      const account=this.paperCompetitionAccount(input.competitionId,input.userId);if(!account)throw new Error("Join the competition before trading.");
+      const competition=await this.paperCompetitionById(input.competitionId);if(!competition||competition.status!=="ACTIVE"||competition.endsAt<=Date.now())throw new Error("Competition trading has ended.");
+      const account=await this.paperCompetitionAccount(input.competitionId,input.userId);if(!account)throw new Error("Join the competition before trading.");
       if(totalCost>account.cashBalanceUsd+0.000001)throw new Error(`Insufficient paper cash. Available: $${account.cashBalanceUsd.toFixed(2)}`);
-      const current=this.paperCompetitionPosition(input.competitionId,input.userId,input.tokenAddress);
+      const current=await this.paperCompetitionPosition(input.competitionId,input.userId,input.tokenAddress);
       const amount=(current?.tokenAmount??0)+input.quote.tokenAmount;
       const cost=(current?.costBasisUsd??0)+totalCost;
       const now=Date.now();
-      this.db.prepare(`INSERT INTO paper_competition_positions(competition_id,user_id,token_address,symbol,token_amount,cost_basis_usd,average_entry_price_usd,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(competition_id,user_id,token_address) DO UPDATE SET symbol=excluded.symbol,token_amount=excluded.token_amount,cost_basis_usd=excluded.cost_basis_usd,average_entry_price_usd=excluded.average_entry_price_usd,updated_at=excluded.updated_at`).run(input.competitionId,input.userId,input.tokenAddress.toLowerCase(),input.symbol,amount,cost,cost/amount,now);
-      this.db.prepare("UPDATE paper_competition_accounts SET cash_balance_usd=cash_balance_usd-?,updated_at=? WHERE competition_id=? AND user_id=?").run(totalCost,now,input.competitionId,input.userId);
-      this.insertCompetitionTrade(input,null,now);
-      this.db.exec("COMMIT");
-      return this.paperCompetitionPosition(input.competitionId,input.userId,input.tokenAddress)!;
-    }catch(error){this.db.exec("ROLLBACK");throw error;}
+      await this.db.prepare(`INSERT INTO paper_competition_positions(competition_id,user_id,token_address,symbol,token_amount,cost_basis_usd,average_entry_price_usd,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(competition_id,user_id,token_address) DO UPDATE SET symbol=excluded.symbol,token_amount=excluded.token_amount,cost_basis_usd=excluded.cost_basis_usd,average_entry_price_usd=excluded.average_entry_price_usd,updated_at=excluded.updated_at`).run(input.competitionId,input.userId,input.tokenAddress.toLowerCase(),input.symbol,amount,cost,cost/amount,now);
+      await this.db.prepare("UPDATE paper_competition_accounts SET cash_balance_usd=cash_balance_usd-?,updated_at=? WHERE competition_id=? AND user_id=?").run(totalCost,now,input.competitionId,input.userId);
+      await this.insertCompetitionTrade(input,null,now);
+      await this.db.exec("COMMIT");
+      return (await this.paperCompetitionPosition(input.competitionId,input.userId,input.tokenAddress))!;
+    }catch(error){await this.db.exec("ROLLBACK");throw error;}
   }
 
-  executeCompetitionSell(input:{competitionId:number;userId:string;tokenAddress:Address;symbol:string;quote:PaperExecutionQuote;marketCapUsd:number|null}):{position:PaperCompetitionPosition;realizedPnlUsd:number;netProceedsUsd:number}{
-    this.db.exec("BEGIN IMMEDIATE");
+  async executeCompetitionSell(input:{competitionId:number;userId:string;tokenAddress:Address;symbol:string;quote:PaperExecutionQuote;marketCapUsd:number|null}): Promise<{position:PaperCompetitionPosition;realizedPnlUsd:number;netProceedsUsd:number}>{
+    await this.db.exec("BEGIN IMMEDIATE");
     try{
-      const competition=this.paperCompetitionById(input.competitionId);if(!competition||competition.status!=="ACTIVE"||competition.endsAt<=Date.now())throw new Error("Competition trading has ended.");
-      const account=this.paperCompetitionAccount(input.competitionId,input.userId);if(!account)throw new Error("Join the competition before trading.");
-      const current=this.paperCompetitionPosition(input.competitionId,input.userId,input.tokenAddress);if(!current||current.tokenAmount<=0)throw new Error("No open position for this token.");
+      const competition=await this.paperCompetitionById(input.competitionId);if(!competition||competition.status!=="ACTIVE"||competition.endsAt<=Date.now())throw new Error("Competition trading has ended.");
+      const account=await this.paperCompetitionAccount(input.competitionId,input.userId);if(!account)throw new Error("Join the competition before trading.");
+      const current=await this.paperCompetitionPosition(input.competitionId,input.userId,input.tokenAddress);if(!current||current.tokenAmount<=0)throw new Error("No open position for this token.");
       if(input.quote.tokenAmount>current.tokenAmount*1.000000001)throw new Error("Sell amount exceeds the open position.");
       const sold=Math.min(current.tokenAmount,input.quote.tokenAmount);const fraction=sold/current.tokenAmount;const basis=current.costBasisUsd*fraction;const net=Math.max(0,input.quote.grossValueUsd-input.quote.gasCostUsd);const realized=net-basis;const amount=Math.max(0,current.tokenAmount-sold);const cost=Math.max(0,current.costBasisUsd-basis);const now=Date.now();
-      this.db.prepare("UPDATE paper_competition_positions SET token_amount=?,cost_basis_usd=?,average_entry_price_usd=?,updated_at=? WHERE competition_id=? AND user_id=? AND token_address=?").run(amount,cost,amount>0?cost/amount:0,now,input.competitionId,input.userId,input.tokenAddress.toLowerCase());
-      this.db.prepare("UPDATE paper_competition_accounts SET cash_balance_usd=cash_balance_usd+?,realized_pnl_usd=realized_pnl_usd+?,wins=wins+?,losses=losses+?,updated_at=? WHERE competition_id=? AND user_id=?").run(net,realized,realized>0?1:0,realized<0?1:0,now,input.competitionId,input.userId);
-      this.insertCompetitionTrade(input,realized,now);
-      this.db.exec("COMMIT");
-      return {position:this.paperCompetitionPosition(input.competitionId,input.userId,input.tokenAddress)!,realizedPnlUsd:realized,netProceedsUsd:net};
-    }catch(error){this.db.exec("ROLLBACK");throw error;}
+      await this.db.prepare("UPDATE paper_competition_positions SET token_amount=?,cost_basis_usd=?,average_entry_price_usd=?,updated_at=? WHERE competition_id=? AND user_id=? AND token_address=?").run(amount,cost,amount>0?cost/amount:0,now,input.competitionId,input.userId,input.tokenAddress.toLowerCase());
+      await this.db.prepare("UPDATE paper_competition_accounts SET cash_balance_usd=cash_balance_usd+?,realized_pnl_usd=realized_pnl_usd+?,wins=wins+?,losses=losses+?,updated_at=? WHERE competition_id=? AND user_id=?").run(net,realized,realized>0?1:0,realized<0?1:0,now,input.competitionId,input.userId);
+      await this.insertCompetitionTrade(input,realized,now);
+      await this.db.exec("COMMIT");
+      return {position:(await this.paperCompetitionPosition(input.competitionId,input.userId,input.tokenAddress))!,realizedPnlUsd:realized,netProceedsUsd:net};
+    }catch(error){await this.db.exec("ROLLBACK");throw error;}
   }
 
-  private insertCompetitionTrade(input:{competitionId:number;userId:string;tokenAddress:Address;symbol:string;quote:PaperExecutionQuote;marketCapUsd:number|null},realizedPnlUsd:number|null,createdAt:number):void{
-    this.db.prepare("INSERT INTO paper_competition_trades(competition_id,user_id,token_address,symbol,side,token_amount,gross_value_usd,gas_cost_usd,execution_price_usd,realized_pnl_usd,market_cap_usd,quote_source,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").run(input.competitionId,input.userId,input.tokenAddress.toLowerCase(),input.symbol,input.quote.side,input.quote.tokenAmount,input.quote.grossValueUsd,input.quote.gasCostUsd,input.quote.executionPriceUsd,realizedPnlUsd,input.marketCapUsd,input.quote.source,createdAt);
+  private async insertCompetitionTrade(input:{competitionId:number;userId:string;tokenAddress:Address;symbol:string;quote:PaperExecutionQuote;marketCapUsd:number|null},realizedPnlUsd:number|null,createdAt:number): Promise<void> {
+    await this.db.prepare("INSERT INTO paper_competition_trades(competition_id,user_id,token_address,symbol,side,token_amount,gross_value_usd,gas_cost_usd,execution_price_usd,realized_pnl_usd,market_cap_usd,quote_source,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").run(input.competitionId,input.userId,input.tokenAddress.toLowerCase(),input.symbol,input.quote.side,input.quote.tokenAmount,input.quote.grossValueUsd,input.quote.gasCostUsd,input.quote.executionPriceUsd,realizedPnlUsd,input.marketCapUsd,input.quote.source,createdAt);
   }
 
-  paperCompetitionTrades(competitionId:number,userId:string,limit=20):PaperCompetitionTrade[]{
-    const rows=this.db.prepare("SELECT * FROM paper_competition_trades WHERE competition_id=? AND user_id=? ORDER BY created_at DESC LIMIT ?").all(competitionId,userId,limit) as Array<Record<string,unknown>>;
+  async paperCompetitionTrades(competitionId:number,userId:string,limit=20): Promise<PaperCompetitionTrade[]> {
+    const rows=await this.db.prepare("SELECT * FROM paper_competition_trades WHERE competition_id=? AND user_id=? ORDER BY created_at DESC LIMIT ?").all(competitionId,userId,limit) as Array<Record<string,unknown>>;
     return rows.map(mapPaperCompetitionTrade);
   }
 
-  configureDigest(chatId: string, enabled: boolean, hour?: number): void {
-    this.db.prepare("UPDATE chats SET digest_enabled=?,digest_hour=COALESCE(?,digest_hour),updated_at=? WHERE chat_id=?").run(enabled ? 1 : 0, hour ?? null, Date.now(), chatId);
+  async configureDigest(chatId: string, enabled: boolean, hour?: number): Promise<void> {
+    await this.db.prepare("UPDATE chats SET digest_enabled=?,digest_hour=COALESCE(?,digest_hour),updated_at=? WHERE chat_id=?").run(enabled ? 1 : 0, hour ?? null, Date.now(), chatId);
   }
 
-  dueDigestChats(hour: number, day: string): string[] {
-    const rows = this.db.prepare("SELECT chat_id FROM chats WHERE digest_enabled=1 AND digest_hour=? AND (last_digest_day IS NULL OR last_digest_day<>?)").all(hour,day) as Array<{chat_id:string}>;
+  async dueDigestChats(hour: number, day: string): Promise<string[]> {
+    const rows = await this.db.prepare("SELECT chat_id FROM chats WHERE digest_enabled=1 AND digest_hour=? AND (last_digest_day IS NULL OR last_digest_day<>?)").all(hour,day) as Array<{chat_id:string}>;
     return rows.map((row)=>row.chat_id);
   }
 
-  markDigestSent(chatId: string, day: string): void { this.db.prepare("UPDATE chats SET last_digest_day=? WHERE chat_id=?").run(day,chatId); }
+  async markDigestSent(chatId: string, day: string): Promise<void> { await this.db.prepare("UPDATE chats SET last_digest_day=? WHERE chat_id=?").run(day,chatId); }
 
-  configureBridge(chatId: string, enabled: boolean, minUsd?: number): void {
-    this.db.prepare("UPDATE chats SET bridge_alerts=?,bridge_min_usd=COALESCE(?,bridge_min_usd),updated_at=? WHERE chat_id=?").run(enabled?1:0,minUsd??null,Date.now(),chatId);
+  async configureBridge(chatId: string, enabled: boolean, minUsd?: number): Promise<void> {
+    await this.db.prepare("UPDATE chats SET bridge_alerts=?,bridge_min_usd=COALESCE(?,bridge_min_usd),updated_at=? WHERE chat_id=?").run(enabled?1:0,minUsd??null,Date.now(),chatId);
   }
 
-  bridgeAlertChats(valueUsd: number | null): string[] {
-    const rows = this.db.prepare("SELECT chat_id FROM chats WHERE bridge_alerts=1 AND (? IS NULL OR ? >= bridge_min_usd)").all(valueUsd,valueUsd) as Array<{chat_id:string}>;
+  async bridgeAlertChats(valueUsd: number | null): Promise<string[]> {
+    const rows = await this.db.prepare("SELECT chat_id FROM chats WHERE bridge_alerts=1 AND (? IS NULL OR ? >= bridge_min_usd)").all(valueUsd,valueUsd) as Array<{chat_id:string}>;
     return rows.map((row)=>row.chat_id);
   }
 
-  recordBridgeFlow(flow: BridgeFlow): boolean {
-    return this.db.prepare("INSERT OR IGNORE INTO bridge_flows(tx_hash,direction,asset,amount,value_usd,wallet_address,occurred_at) VALUES (?,?,?,?,?,?,?)").run(flow.txHash.toLowerCase(),flow.direction,flow.asset,flow.amount,flow.valueUsd,flow.wallet.toLowerCase(),flow.occurredAt).changes>0;
+  async recordBridgeFlow(flow: BridgeFlow): Promise<boolean> {
+    return (await this.db.prepare("INSERT OR IGNORE INTO bridge_flows(tx_hash,direction,asset,amount,value_usd,wallet_address,occurred_at) VALUES (?,?,?,?,?,?,?)").run(flow.txHash.toLowerCase(),flow.direction,flow.asset,flow.amount,flow.valueUsd,flow.wallet.toLowerCase(),flow.occurredAt)).changes>0;
   }
 
-  recentBridgeFlows(since: number, limit=20): BridgeFlow[] {
-    const rows=this.db.prepare("SELECT * FROM bridge_flows WHERE occurred_at>=? ORDER BY occurred_at DESC LIMIT ?").all(since,limit) as Array<Record<string,unknown>>;
+  async recentBridgeFlows(since: number, limit=20): Promise<BridgeFlow[]> {
+    const rows=await this.db.prepare("SELECT * FROM bridge_flows WHERE occurred_at>=? ORDER BY occurred_at DESC LIMIT ?").all(since,limit) as Array<Record<string,unknown>>;
     return rows.map((row)=>({txHash:String(row.tx_hash) as BridgeFlow["txHash"],direction:String(row.direction) as BridgeFlow["direction"],asset:String(row.asset),amount:Number(row.amount),valueUsd:row.value_usd==null?null:Number(row.value_usd),wallet:getAddress(String(row.wallet_address)),occurredAt:Number(row.occurred_at)}));
   }
 }

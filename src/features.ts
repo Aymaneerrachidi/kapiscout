@@ -28,10 +28,10 @@ export class DailyDigestService {
     this.running = true;
     try {
       const day = localDay(now);
-      for (const chatId of this.store.dueDigestChats(now.getHours(), day)) {
+      for (const chatId of await this.store.dueDigestChats(now.getHours(), day)) {
         try {
-          await this.send(chatId, buildDailyDigest(this.store, chatId, now));
-          this.store.markDigestSent(chatId, day);
+          await this.send(chatId, await buildDailyDigest(this.store, chatId, now));
+          await this.store.markDigestSent(chatId, day);
         } catch (error) { console.error(`Digest failed for ${chatId}`, error); }
       }
     } finally { this.running = false; }
@@ -52,11 +52,11 @@ export class HolderTrackerService {
     if (this.running) return;
     this.running = true;
     try {
-      const calls=this.store.listAllCalls();
+      const calls=await this.store.listAllCalls();
       const addresses=[...new Set(calls.map((call)=>call.tokenAddress.toLowerCase()))].slice(0,100);
       for(const address of addresses){
         const scan=await this.scanner.scan(address,true).catch(()=>null); if(!scan)continue;
-        for(const call of calls.filter((item)=>item.tokenAddress.toLowerCase()===address))this.store.recordHolderSnapshot(call.chatId,scan);
+        for(const call of calls.filter((item)=>item.tokenAddress.toLowerCase()===address))await this.store.recordHolderSnapshot(call.chatId,scan);
       }
     } finally { this.running=false; }
   }
@@ -98,8 +98,8 @@ export class BridgeRadarService {
       if (!isDeposit && !isWithdrawal) continue;
       const amount = Number(formatEther(tx.value));
       const flow: BridgeFlow = { txHash: tx.hash, direction: isDeposit ? "IN" : "OUT", asset: "ETH", amount, valueUsd: ethUsd == null ? null : amount * ethUsd, wallet: getAddress(tx.from), occurredAt };
-      if (!this.store.recordBridgeFlow(flow)) continue;
-      for (const chatId of this.store.bridgeAlertChats(flow.valueUsd)) await this.send(chatId, bridgeFlowHtml(flow), flow.txHash).catch((error)=>console.error(`Bridge alert failed for ${chatId}`,error));
+      if (!await this.store.recordBridgeFlow(flow)) continue;
+      for (const chatId of await this.store.bridgeAlertChats(flow.valueUsd)) await this.send(chatId, bridgeFlowHtml(flow), flow.txHash).catch((error)=>console.error(`Bridge alert failed for ${chatId}`,error));
     }
   }
 
@@ -111,11 +111,11 @@ export class BridgeRadarService {
   }
 }
 
-export function buildDailyDigest(store: Store, chatId: string, now = new Date()): string {
+export async function buildDailyDigest(store: Store, chatId: string, now = new Date()): Promise<string> {
   const since = now.getTime() - 24 * 60 * 60_000;
-  const calls = store.listCalls(chatId, 100).filter((item) => item.calledAt >= since);
-  const events = store.recentTokenEvents(chatId, since, 100);
-  const walletMoves = store.listWalletMovements(chatId, undefined, since);
+  const calls = (await store.listCalls(chatId, 100)).filter((item) => item.calledAt >= since);
+  const events = await store.recentTokenEvents(chatId, since, 100);
+  const walletMoves = await store.listWalletMovements(chatId, undefined, since);
   const buys = walletMoves.filter((item) => item.direction === "BUY");
   const sells = walletMoves.filter((item) => item.direction === "SELL");
   const volume = walletMoves.reduce((sum, item) => sum + (item.valueUsd ?? 0), 0);

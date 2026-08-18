@@ -10,7 +10,7 @@ const weth = getAddress("0x4444444444444444444444444444444444444444");
 const hash = `0x${"ab".repeat(32)}` as Hash;
 
 describe("wallet movement classification", () => {
-  it("identifies a token buy", () => {
+  it("identifies a token buy", async () => {
     const movement = classifyMovement(hash, wallet, 1_000n, 10n, [
       { token, from: router, to: wallet, value: 50_000n },
     ], [weth]);
@@ -19,7 +19,7 @@ describe("wallet movement classification", () => {
     expect(movement?.nativeAmountWei).toBe(1_000n);
   });
 
-  it("identifies a token sale into a quote asset", () => {
+  it("identifies a token sale into a quote asset", async () => {
     const movement = classifyMovement(hash, wallet, 0n, 11n, [
       { token, from: wallet, to: router, value: 25_000n },
       { token: weth, from: router, to: wallet, value: 900n },
@@ -29,14 +29,14 @@ describe("wallet movement classification", () => {
     expect(movement?.quoteAmountRaw).toBe(900n);
   });
 
-  it("does not call a plain outgoing token transfer a sale", () => {
+  it("does not call a plain outgoing token transfer a sale", async () => {
     const movement = classifyMovement(hash, wallet, 0n, 12n, [
       { token, from: wallet, to: router, value: 25_000n },
     ], [weth]);
     expect(movement?.direction).toBe("TRANSFER");
   });
 
-  it("falls back to live token price for a missing quote value", () => {
+  it("falls back to live token price for a missing quote value", async () => {
     const movement = movementFixture();
     const valuation = movementValuation(movement, 9_977_064.857, 0.0000018, getAddress("0x5555555555555555555555555555555555555555"), weth);
     expect(valuation.valueUsd).toBeCloseTo(17.9587, 3);
@@ -48,7 +48,7 @@ describe("wallet movement classification", () => {
     expect(html).toContain("My Smart Wallet");
   });
 
-  it("uses a USDG settlement as the direct USD value", () => {
+  it("uses a USDG settlement as the direct USD value", async () => {
     const usdg = getAddress("0x5555555555555555555555555555555555555555");
     const movement = { ...movementFixture(), quoteAddress: usdg, quoteAmountRaw: 42n * 10n ** 18n };
     const valuation = movementValuation(movement, 100, 0.5, usdg, weth);

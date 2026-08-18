@@ -36,7 +36,7 @@ export class CallTracker {
     if (this.running) return;
     this.running = true;
     try {
-      const calls = this.store.listAllCalls();
+      const calls = await this.store.listAllCalls();
       const addresses = [...new Set(calls.map((call) => call.tokenAddress.toLowerCase()))].slice(0, 250);
       for (const address of addresses) {
         const market = await this.market.getBestMarket(address as Address).catch(() => null);
@@ -55,23 +55,26 @@ export class CallTracker {
     const previousAth = call.athMarketCapUsd;
     const previousLiquidity = call.lastLiquidityUsd;
     const previousDexPaid = call.lastDexPaid;
-    const updated = this.store.updateCallMarket(call.id, {
+    const updated = await this.store.updateCallMarket(call.id, {
       priceUsd: market.priceUsd,
       marketCapUsd: marketCap,
       liquidityUsd: market.liquidityUsd,
       dexPaid: market.dexPaid,
     });
     if (!updated || !this.send) return;
-    const settings = this.store.getChatSettings(call.chatId);
+    const settings = await this.store.getChatSettings(call.chatId);
     const multiple = updated.entryMarketCapUsd && marketCap ? marketCap / updated.entryMarketCapUsd : null;
 
     let milestoneSent = false;
     if (settings.milestoneAlerts && multiple != null) {
-      const crossed = milestones.filter((threshold) => multiple >= threshold && this.store.claimCallAlert(call.id, `multiple:${threshold}`));
+      const crossed: number[] = [];
+      for (const threshold of milestones) {
+        if (multiple >= threshold && await this.store.claimCallAlert(call.id, `multiple:${threshold}`)) crossed.push(threshold);
+      }
       const highest = crossed.at(-1);
       if (highest != null) {
         milestoneSent = true;
-        this.store.recordTokenEvent({ chatId: call.chatId, tokenAddress: call.tokenAddress, symbol: call.symbol, kind: "MILESTONE", title: `Reached ${highest}x`, txHash: null, valueUsd: marketCap });
+        await this.store.recordTokenEvent({ chatId: call.chatId, tokenAddress: call.tokenAddress, symbol: call.symbol, kind: "MILESTONE", title: `Reached ${highest}x`, txHash: null, valueUsd: marketCap });
         await this.send(call.chatId, alertHtml("🚀", `$${call.symbol} reached ${highest}x`, call, marketCap, updated.athMarketCapUsd), call.tokenAddress);
       }
     }
@@ -79,13 +82,13 @@ export class CallTracker {
     const higherAth = marketCap != null && previousAth != null && marketCap > previousAth;
     const alertBase = updated.lastAthAlertMarketCapUsd ?? previousAth;
     if (!milestoneSent && settings.athAlerts && higherAth && alertBase != null && marketCap >= alertBase * 1.1) {
-      this.store.setLastAthAlert(call.id, marketCap);
-      this.store.recordTokenEvent({ chatId: call.chatId, tokenAddress: call.tokenAddress, symbol: call.symbol, kind: "ATH", title: "New tracked ATH", txHash: null, valueUsd: marketCap });
+      await this.store.setLastAthAlert(call.id, marketCap);
+      await this.store.recordTokenEvent({ chatId: call.chatId, tokenAddress: call.tokenAddress, symbol: call.symbol, kind: "ATH", title: "New tracked ATH", txHash: null, valueUsd: marketCap });
       await this.send(call.chatId, alertHtml("⛰", `$${call.symbol} set a new ATH`, call, marketCap, marketCap), call.tokenAddress);
     }
 
-    if (settings.dexPaidAlerts && previousDexPaid === false && market.dexPaid === true && this.store.claimCallAlert(call.id, "dex-paid")) {
-      this.store.recordTokenEvent({ chatId: call.chatId, tokenAddress: call.tokenAddress, symbol: call.symbol, kind: "DEX_PAID", title: "DEX profile marked paid", txHash: null, valueUsd: marketCap });
+    if (settings.dexPaidAlerts && previousDexPaid === false && market.dexPaid === true && await this.store.claimCallAlert(call.id, "dex-paid")) {
+      await this.store.recordTokenEvent({ chatId: call.chatId, tokenAddress: call.tokenAddress, symbol: call.symbol, kind: "DEX_PAID", title: "DEX profile marked paid", txHash: null, valueUsd: marketCap });
       await this.send(call.chatId, alertHtml("✅", `$${call.symbol} is now DEX paid`, call, marketCap, updated.athMarketCapUsd), call.tokenAddress);
     }
 
@@ -93,10 +96,10 @@ export class CallTracker {
       const ratio = market.liquidityUsd / previousLiquidity;
       const direction = ratio <= 0.7 ? "removed" : ratio >= 1.5 ? "added" : null;
       const eventKey = direction ? `liquidity:${direction}:${Math.floor(Date.now() / 3_600_000)}` : null;
-      if (direction && eventKey && this.store.claimCallAlert(call.id, eventKey)) {
+      if (direction && eventKey && await this.store.claimCallAlert(call.id, eventKey)) {
         const icon = direction === "removed" ? "🔴" : "🟢";
         const change = Math.abs((ratio - 1) * 100).toFixed(0);
-        this.store.recordTokenEvent({ chatId: call.chatId, tokenAddress: call.tokenAddress, symbol: call.symbol, kind: "LIQUIDITY", title: `${change}% liquidity ${direction}`, txHash: null, valueUsd: market.liquidityUsd });
+        await this.store.recordTokenEvent({ chatId: call.chatId, tokenAddress: call.tokenAddress, symbol: call.symbol, kind: "LIQUIDITY", title: `${change}% liquidity ${direction}`, txHash: null, valueUsd: market.liquidityUsd });
         const impact = estimateExit(1_000, market.liquidityUsd).impactPercent;
         const impactText = direction === "removed" && impact != null ? ` · $1K exit ≈ ${impact.toFixed(1)}% impact` : "";
         await this.send(call.chatId, alertHtml(icon, `${change}% liquidity ${direction} on $${call.symbol}${impactText}`, call, marketCap, updated.athMarketCapUsd, market.liquidityUsd), call.tokenAddress);
