@@ -23,6 +23,109 @@ a,button{color:inherit;font:inherit}a{text-decoration:none}button{border:0}img{d
 @media(max-width:900px){.nav-cta{position:absolute;top:7px;right:8px;display:inline-flex}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*:before,*:after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 
+/* Chapter thumbnails preserve the complete artwork inside each book tile. */
+.contents-grid .chapter-card img {
+  object-fit: contain;
+}
+
+.chapter-explorer > div {
+  position: relative;
+  z-index: 3;
+  max-width: 52%;
+}
+
+.chapter-explorer > img {
+  right: 4%;
+  bottom: 7%;
+  width: 43%;
+  height: 70%;
+  object-position: center;
+  box-shadow: 0 18px 46px rgba(6,23,14,.16);
+}
+
+.chapter-portrait img {
+  right: 0;
+  bottom: 0;
+  width: 76%;
+  height: 76%;
+  object-position: right bottom;
+}
+
+.chapter-image {
+  color: #f4eedc;
+  background: #03170c;
+}
+
+.chapter-image::after {
+  background: linear-gradient(180deg,rgba(3,23,12,.04) 34%,rgba(3,23,12,.9));
+}
+
+.chapter-image img {
+  padding: 18px;
+  object-position: center;
+  filter: saturate(.74) contrast(1.04);
+}
+
+.chapter-dark::after {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  content: "";
+  background: linear-gradient(90deg,rgba(3,18,10,.98) 0%,rgba(3,18,10,.84) 43%,rgba(3,18,10,.18) 100%);
+}
+
+.chapter-dark img {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 18px;
+  object-position: center;
+  filter: saturate(.68) brightness(.72);
+}
+
+.chapter-dark > div {
+  position: relative;
+  z-index: 3;
+  max-width: 55%;
+}
+
+.chapter-dark:hover {
+  color: #f4eedc;
+  background-color: #062416;
+}
+
+.chapter-dark:hover .mini-copy {
+  color: rgba(244,238,220,.72);
+}
+
+@media (max-width: 900px) {
+  .chapter-explorer > img {
+    top: 44px;
+    right: 20px;
+    bottom: auto;
+    width: calc(100% - 40px);
+    height: 45%;
+  }
+
+  .chapter-explorer > div {
+    max-width: 100%;
+  }
+
+  .chapter-portrait img {
+    width: 72%;
+    height: 72%;
+  }
+
+  .chapter-dark > div {
+    max-width: 72%;
+  }
+
+  .chapter-image img,
+  .chapter-dark img {
+    padding: 12px;
+  }
+}
+
 /* The reading room: every chapter is a physical spread. */
 .book-spread {
   --leaf: #f2ebd9;
