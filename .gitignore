@@ -6,3 +6,9 @@ coverage/
 *.log
 .DS_Store
 __MACOSX/
+.vercel
+
+.vercel
+.env*
+output/
+.playwright-mcp/

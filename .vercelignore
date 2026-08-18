@@ -1,0 +1,15 @@
+# The bot deployment only needs api/, src/, and one runtime asset.
+research/
+new images/
+web/
+deploy/
+dist/
+tests/
+data/
+logs/
+output/
+*.log
+
+# card.ts reads the mascot at runtime; everything else in assets/ is web-only.
+assets/*
+!assets/kapiscout-mascot.png

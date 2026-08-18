@@ -1,14 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run typecheck",
+  "outputDirectory": "public",
   "functions": {
     "api/bot.ts": {
       "memory": 1024,
       "maxDuration": 60
     }
-  },
-  "rewrites": [
-    { "source": "/", "destination": "/web/" },
-    { "source": "/styles.css", "destination": "/web/styles.css" },
-    { "source": "/script.js", "destination": "/web/script.js" }
-  ]
+  }
 }

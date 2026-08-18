@@ -74,8 +74,15 @@ export class Store {
     this.db = new SqlDatabase(url, authToken);
   }
 
-  /** Must be awaited once before any other call. */
-  async init(): Promise<void> {
+  /**
+   * Must be awaited once before any other call.
+   *
+   * Migrations replay ~30 statements and, against a remote database, that is
+   * ~30 network round trips. Serverless callers run once with { migrate: true }
+   * out of band (npm run migrate) and pass false on the request path.
+   */
+  async init(options: { migrate?: boolean } = {}): Promise<void> {
+    if (options.migrate === false) return;
     await this.db.exec("PRAGMA foreign_keys = ON;");
     await this.migrate();
     await this.backfillProofs();
@@ -392,7 +399,7 @@ export class Store {
   private async backfillProofs(): Promise<void> {
     const rows = await this.db.prepare("SELECT * FROM calls WHERE proof_hash IS NULL OR proof_hash = ''").all() as unknown as CallRow[];
     const update = await this.db.prepare("UPDATE calls SET proof_hash = ? WHERE id = ?");
-    for (const row of rows) update.run(proofForRow(row), row.id);
+    for (const row of rows) await update.run(proofForRow(row), row.id);
   }
 
   private async ensureColumn(table: string, column: string, definition: string): Promise<void> {

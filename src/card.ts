@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import sharp from "sharp";
 import type { CallerStats, CallRecord, PaperCompetition, PaperLeaderboardEntry, PaperPortfolioSnapshot, TokenScan } from "./types.js";
@@ -9,13 +10,32 @@ let dashboardCard: Promise<Buffer> | null = null;
 const artworkCache = new Map<string, Promise<string>>();
 
 async function mascot(): Promise<string> {
-  mascotDataUrl ??= readFile(resolve(process.cwd(), "assets/kapiscout-mascot.png"))
-    .then((buffer) => `data:image/png;base64,${buffer.toString("base64")}`);
+  if (mascotDataUrl) return mascotDataUrl;
+  mascotDataUrl = (async () => {
+    const candidatePaths = [
+      resolve(process.cwd(), "new images/new logo.png"),
+      resolve(process.cwd(), "assets/story/new-logo.png"),
+      resolve(process.cwd(), "assets/kapiscout-mascot.png"),
+      resolve(process.cwd(), "assets/kapiscout-logo.png"),
+    ];
+    for (const p of candidatePaths) {
+      if (existsSync(p)) {
+        try {
+          const buffer = await readFile(p);
+          return `data:image/png;base64,${buffer.toString("base64")}`;
+        } catch {
+          // try next path
+        }
+      }
+    }
+    // Fallback minimal embedded transparent pixel if none found
+    return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+  })();
   return mascotDataUrl;
 }
 
 function xml(value: unknown): string {
-  return String(value)
+  return String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -24,80 +44,311 @@ function xml(value: unknown): string {
 }
 
 function statusColor(scan: TokenScan): string {
-  if (scan.warnings.length >= 3) return "#FF5C5C";
-  if (scan.warnings.length) return "#FFC857";
+  if (scan.warnings.length >= 3) return "#FF4D5A";
+  if (scan.warnings.length) return "#FFB830";
   return "#00E86B";
 }
+
+function statusLabel(scan: TokenScan): string {
+  if (scan.warnings.length >= 3) return `${scan.warnings.length} HIGH RISKS`;
+  if (scan.warnings.length) return `${scan.warnings.length} WARNING${scan.warnings.length === 1 ? "" : "S"}`;
+  return "CLEAN AUDIT";
+}
+
+function compactNumber(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  for (const [size, suffix] of [[1e12, "T"], [1e9, "B"], [1e6, "M"], [1e3, "K"]] as const) {
+    if (Math.abs(value) >= size) return `${Number((value / size).toFixed(2))}${suffix}`;
+  }
+  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function formatSignedCardUsd(value: number): string {
+  return `${value >= 0 ? "+" : "-"}${formatUsd(Math.abs(value))}`;
+}
+
+const COMMON_DEFS = `
+  <defs>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="16" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="36"/>
+    </filter>
+    <filter id="drop" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000000" flood-opacity="0.6"/>
+    </filter>
+
+    <linearGradient id="canvasGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#040A07"/>
+      <stop offset="50%" stop-color="#06120B"/>
+      <stop offset="100%" stop-color="#030805"/>
+    </linearGradient>
+
+    <linearGradient id="cardGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0D2217" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#07150E" stop-opacity="0.98"/>
+    </linearGradient>
+
+    <linearGradient id="cardBorder" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#245A3A"/>
+      <stop offset="50%" stop-color="#153623"/>
+      <stop offset="100%" stop-color="#0D2417"/>
+    </linearGradient>
+
+    <linearGradient id="emeraldGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00E86B"/>
+      <stop offset="100%" stop-color="#00F59B"/>
+    </linearGradient>
+
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFD166"/>
+      <stop offset="100%" stop-color="#FFB830"/>
+    </linearGradient>
+
+    <linearGradient id="redGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FF5C64"/>
+      <stop offset="100%" stop-color="#FF334B"/>
+    </linearGradient>
+
+    <linearGradient id="mascotBackdrop" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#143825"/>
+      <stop offset="40%" stop-color="#0B2216"/>
+      <stop offset="100%" stop-color="#05120B"/>
+    </linearGradient>
+
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#163825" stroke-width="0.75" opacity="0.3"/>
+      <circle cx="40" cy="40" r="1" fill="#00E86B" opacity="0.2"/>
+    </pattern>
+  </defs>
+`;
 
 export function generateDashboardCard(): Promise<Buffer> {
   dashboardCard ??= (async () => {
     const mascotUrl = await mascot();
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
-      <defs><filter id="soft"><feGaussianBlur stdDeviation="34"/></filter><clipPath id="heroMascot"><rect x="820" y="74" width="382" height="510" rx="36"/></clipPath></defs>
-      <rect width="1280" height="720" fill="#050D08"/><circle cx="1110" cy="80" r="330" fill="#00E86B" opacity=".12" filter="url(#soft)"/>
-      <rect x="28" y="28" width="1224" height="664" rx="38" fill="#0A1810" stroke="#1C3B29" stroke-width="2"/><rect x="28" y="28" width="10" height="664" rx="5" fill="#00E86B"/>
-      <text x="78" y="90" fill="#00E86B" font-family="Arial,sans-serif" font-size="22" font-weight="900" letter-spacing="5">KAPISCOUT</text><text x="276" y="90" fill="#688274" font-family="Arial,sans-serif" font-size="16" font-weight="800" letter-spacing="2">ROBINHOOD CHAIN</text>
-      <text x="78" y="202" fill="#F5F8F5" font-family="Arial,sans-serif" font-size="66" font-weight="900">See the play.</text><text x="78" y="278" fill="#F5F8F5" font-family="Arial,sans-serif" font-size="66" font-weight="900">Know the exit.</text>
-      <text x="78" y="338" fill="#8BA095" font-family="Arial,sans-serif" font-size="24" font-weight="600">One clean interface for tokens, wallets and calls.</text>
-      ${dashboardPill(78,402,"SCAN","Live market + chart")}${dashboardPill(314,402,"TRACK","Wallet intelligence")}${dashboardPill(550,402,"PROVE","First-call PNL")}
-      <rect x="78" y="566" width="644" height="66" rx="20" fill="#00E86B"/><circle cx="116" cy="599" r="7" fill="#06210D"/><text x="140" y="608" fill="#04200C" font-family="Arial,sans-serif" font-size="22" font-weight="900">LIVE · FAST · READ-ONLY</text>
-      <rect x="802" y="56" width="418" height="550" rx="42" fill="#00C805"/><image href="${mascotUrl}" x="820" y="74" width="382" height="510" preserveAspectRatio="xMidYMid slice" clip-path="url(#heroMascot)"/>
-      <text x="1204" y="656" text-anchor="end" fill="#425A4A" font-family="Arial,sans-serif" font-size="14" font-weight="800">BUILT FOR THE TRENCHES</text>
+      ${COMMON_DEFS}
+      <rect width="1280" height="720" fill="url(#canvasGrad)"/>
+      <rect width="1280" height="720" fill="url(#grid)"/>
+
+      <!-- Ambient Glows -->
+      <circle cx="1120" cy="120" r="320" fill="#00E86B" opacity="0.1" filter="url(#softGlow)"/>
+      <circle cx="160" cy="620" r="260" fill="#00E86B" opacity="0.06" filter="url(#softGlow)"/>
+
+      <!-- Outer Chassis Frame -->
+      <rect x="24" y="24" width="1232" height="672" rx="32" fill="none" stroke="url(#cardBorder)" stroke-width="2"/>
+      <rect x="24" y="24" width="10" height="672" rx="5" fill="url(#emeraldGrad)"/>
+
+      <!-- Header Topbar -->
+      <g transform="translate(68, 64)">
+        <rect x="0" y="0" width="150" height="34" rx="17" fill="#0E2B1B" stroke="#1F5334" stroke-width="1.5"/>
+        <circle cx="18" cy="17" r="5" fill="#00E86B"/>
+        <text x="32" y="23" fill="#00E86B" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="900" letter-spacing="3">KAPISCOUT</text>
+
+        <rect x="162" y="0" width="168" height="34" rx="17" fill="#091C12" stroke="#173F28" stroke-width="1.2"/>
+        <text x="178" y="23" fill="#84A895" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="800" letter-spacing="2">ROBINHOOD CHAIN</text>
+      </g>
+
+      <!-- Hero Headline -->
+      <text x="68" y="184" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="58" font-weight="900" letter-spacing="-1">See the play.</text>
+      <text x="68" y="248" fill="url(#emeraldGrad)" font-family="system-ui, -apple-system, sans-serif" font-size="58" font-weight="900" letter-spacing="-1">Know the exit.</text>
+      <text x="68" y="304" fill="#8BA797" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="600">The premier read-only scout, chart scanner, and first-call alpha terminal.</text>
+
+      <!-- Interactive 4-Pill Feature Matrix -->
+      <g transform="translate(68, 350)">
+        ${dashPill(0, 0, "SCAN", "Live DEX & Candlesticks", "01")}
+        ${dashPill(238, 0, "TRACK", "Smart Money & KOL Radar", "02")}
+        ${dashPill(476, 0, "PROVE", "First-Call PNL Receipts", "03")}
+      </g>
+
+      <!-- Bottom Banner Pill -->
+      <g transform="translate(68, 550)">
+        <rect x="0" y="0" width="690" height="74" rx="22" fill="#00E86B" filter="url(#drop)"/>
+        <circle cx="36" cy="37" r="9" fill="#041F0D"/>
+        <text x="58" y="45" fill="#041F0D" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="900" letter-spacing="2">LIVE ONCHAIN · READ-ONLY · INSTANT ALPHA</text>
+      </g>
+
+      <!-- Mascot Hero Showcase on the Right -->
+      <g transform="translate(804, 52)">
+        <rect x="0" y="0" width="424" height="572" rx="34" fill="url(#mascotBackdrop)" stroke="url(#cardBorder)" stroke-width="2" filter="url(#drop)"/>
+        <rect x="0" y="0" width="424" height="572" rx="34" fill="none" stroke="#00E86B" stroke-width="1.5" opacity="0.3"/>
+
+        <!-- Mascot Glow & Image -->
+        <circle cx="212" cy="230" r="160" fill="#00E86B" opacity="0.15" filter="url(#softGlow)"/>
+        <clipPath id="dashMascotClip"><rect x="24" y="24" width="376" height="376" rx="28"/></clipPath>
+        <image href="${mascotUrl}" x="24" y="24" width="376" height="376" preserveAspectRatio="xMidYMid slice" clip-path="url(#dashMascotClip)"/>
+
+        <!-- Showcase Footer Tag -->
+        <rect x="24" y="424" width="376" height="118" rx="20" fill="#081810" stroke="#163825" stroke-width="1.5"/>
+        <text x="44" y="458" fill="#00E86B" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="900" letter-spacing="2">LORE OF ROBINHOOD</text>
+        <text x="44" y="492" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="900">Kapiscout of Robinhood</text>
+        <text x="44" y="520" fill="#7E9E8C" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="600">The quiet guide through the trenches.</text>
+      </g>
+
+      <!-- Footer Subtext -->
+      <text x="1228" y="666" text-anchor="end" fill="#4B6A57" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="800" letter-spacing="1">KAPISCOUT PROTOCOL · INFORMATIONAL ONLY</text>
     </svg>`;
-    return sharp(Buffer.from(svg)).png({compressionLevel:9}).toBuffer();
+    return sharp(Buffer.from(svg)).png({ compressionLevel: 9 }).toBuffer();
   })();
   return dashboardCard;
 }
 
-function dashboardPill(x:number,y:number,label:string,detail:string):string {
-  return `<rect x="${x}" y="${y}" width="218" height="112" rx="20" fill="#10241A" stroke="#214632"/><text x="${x+20}" y="${y+39}" fill="#00E86B" font-family="Arial,sans-serif" font-size="15" font-weight="900" letter-spacing="2">${label}</text><text x="${x+20}" y="${y+75}" fill="#DDE8E0" font-family="Arial,sans-serif" font-size="16" font-weight="700">${detail}</text>`;
+function dashPill(x: number, y: number, tag: string, desc: string, num: string): string {
+  return `
+    <g transform="translate(${x}, ${y})">
+      <rect x="0" y="0" width="222" height="138" rx="22" fill="url(#cardGrad)" stroke="url(#cardBorder)" stroke-width="1.8" filter="url(#drop)"/>
+      <text x="22" y="38" fill="#466E54" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="900">${xml(num)}</text>
+      <rect x="48" y="22" width="76" height="24" rx="12" fill="#0F2B1C" stroke="#1F5336" stroke-width="1"/>
+      <text x="86" y="38" text-anchor="middle" fill="#00E86B" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="900" letter-spacing="1.5">${xml(tag)}</text>
+      <text x="22" y="86" fill="#F4F8F5" font-family="system-ui, -apple-system, sans-serif" font-size="17" font-weight="800">${xml(desc)}</text>
+    </g>
+  `;
 }
 
 export async function generateTokenCard(scan: TokenScan): Promise<Buffer> {
   const mascotUrl = await mascot();
   const marketCap = scan.market.marketCapUsd ?? scan.market.fdvUsd;
-  const security = scan.warnings.length ? `${scan.warnings.length} FLAG${scan.warnings.length === 1 ? "" : "S"}` : "CLEAN SCAN";
+  const security = statusLabel(scan);
   const status = statusColor(scan);
+  const priceChange = scan.market.priceChange24h ?? 0;
+  const isUp = priceChange >= 0;
+  const changeColor = isUp ? "#00E86B" : "#FF5C64";
+
+  // 1h flow calculation
+  const buys = scan.market.buys1h ?? 0;
+  const sells = scan.market.sells1h ?? 0;
+  const totalFlow = buys + sells;
+  const buyRatio = totalFlow > 0 ? (buys / totalFlow) * 100 : 50;
+
   const svg = `
   <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
-    <rect width="1280" height="720" fill="#07140D"/>
-    <rect x="24" y="24" width="1232" height="672" rx="36" fill="#0D2116" stroke="#1F4931" stroke-width="2"/>
-    <rect x="24" y="24" width="12" height="672" rx="6" fill="#00E86B"/>
+    ${COMMON_DEFS}
+    <rect width="1280" height="720" fill="url(#canvasGrad)"/>
+    <rect width="1280" height="720" fill="url(#grid)"/>
 
-    <text x="74" y="82" fill="#00E86B" font-family="Arial, sans-serif" font-size="22" font-weight="800" letter-spacing="4">KAPISCOUT</text>
-    <text x="270" y="82" fill="#789585" font-family="Arial, sans-serif" font-size="18" font-weight="700" letter-spacing="2">ROBINHOOD CHAIN</text>
-    <rect x="74" y="108" width="770" height="2" fill="#1C3B29"/>
+    <!-- Ambient Glow Effects -->
+    <circle cx="1120" cy="140" r="300" fill="#00E86B" opacity="0.12" filter="url(#softGlow)"/>
+    <circle cx="100" cy="100" r="220" fill="#00E86B" opacity="0.08" filter="url(#softGlow)"/>
 
-    <text x="74" y="174" fill="#F4F7F4" font-family="Arial, sans-serif" font-size="50" font-weight="800">${xml(scan.token.name)}</text>
-    <text x="74" y="218" fill="#8AA596" font-family="Arial, sans-serif" font-size="27" font-weight="700">$${xml(scan.token.symbol)} · ${xml(scan.market.dexId?.toUpperCase() ?? "NO DEX")}</text>
+    <!-- Main Chassis Border -->
+    <rect x="24" y="24" width="1232" height="672" rx="32" fill="none" stroke="url(#cardBorder)" stroke-width="2"/>
+    <rect x="24" y="24" width="10" height="672" rx="5" fill="url(#emeraldGrad)"/>
 
-    <text x="74" y="282" fill="#6F8E7C" font-family="Arial, sans-serif" font-size="17" font-weight="700" letter-spacing="2">PRICE</text>
-    <text x="74" y="338" fill="#FFFFFF" font-family="Arial, sans-serif" font-size="48" font-weight="800">${xml(formatUsd(scan.market.priceUsd))}</text>
-    <text x="365" y="334" fill="${(scan.market.priceChange24h ?? 0) >= 0 ? "#00E86B" : "#FF6666"}" font-family="Arial, sans-serif" font-size="25" font-weight="800">${xml(formatPercent(scan.market.priceChange24h, true))}</text>
-    <text x="365" y="360" fill="#698374" font-family="Arial, sans-serif" font-size="14" font-weight="700">24 HOURS</text>
+    <!-- Left Content Column -->
+    <g transform="translate(68, 48)">
 
-    ${metric(74, 398, "MARKET CAP", formatUsd(marketCap))}
-    ${metric(327, 398, "LIQUIDITY", formatUsd(scan.market.liquidityUsd))}
-    ${metric(580, 398, "24H VOLUME", formatUsd(scan.market.volume24hUsd))}
+      <!-- Top Header Navigation -->
+      <rect x="0" y="0" width="138" height="32" rx="16" fill="#0E2B1B" stroke="#1F5334" stroke-width="1.5"/>
+      <circle cx="16" cy="16" r="4.5" fill="#00E86B"/>
+      <text x="28" y="21" fill="#00E86B" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="900" letter-spacing="2.5">KAPISCOUT</text>
 
-    <rect x="74" y="536" width="770" height="104" rx="20" fill="#0A1A11" stroke="#1C3B29"/>
-    <circle cx="108" cy="570" r="7" fill="${status}"/>
-    <text x="128" y="577" fill="${status}" font-family="Arial, sans-serif" font-size="18" font-weight="800">${xml(security)}</text>
-    <text x="108" y="613" fill="#90A99A" font-family="Arial, sans-serif" font-size="17" font-weight="600">${xml(`${scan.token.holdersCount?.toLocaleString() ?? "N/A"} holders  ·  Top 10 ${formatPercent(scan.holders.top10Percent)}  ·  ${scan.verified ? "Verified" : "Unverified"}`)}</text>
+      <rect x="150" y="0" width="162" height="32" rx="16" fill="#0A1F14" stroke="#17442B" stroke-width="1.2"/>
+      <text x="166" y="21" fill="#7EA590" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="800" letter-spacing="1.5">ROBINHOOD CHAIN</text>
 
-    <rect x="884" y="58" width="324" height="510" rx="30" fill="#00C805"/>
-    <clipPath id="mascotClip"><rect x="900" y="76" width="292" height="292" rx="24"/></clipPath>
-    <image href="${mascotUrl}" x="900" y="76" width="292" height="292" preserveAspectRatio="xMidYMid slice" clip-path="url(#mascotClip)"/>
-    <text x="920" y="414" fill="#05230F" font-family="Arial, sans-serif" font-size="16" font-weight="800" letter-spacing="2">PAIR AGE</text>
-    <text x="920" y="455" fill="#031B0B" font-family="Arial, sans-serif" font-size="36" font-weight="900">${xml(formatAge(scan.market.pairCreatedAt))}</text>
-    <text x="920" y="502" fill="#05230F" font-family="Arial, sans-serif" font-size="16" font-weight="800" letter-spacing="2">1H FLOW</text>
-    <text x="920" y="540" fill="#031B0B" font-family="Arial, sans-serif" font-size="23" font-weight="900">${xml(`${scan.market.buys1h ?? "—"} B / ${scan.market.sells1h ?? "—"} S`)}</text>
+      <!-- Security Status Pill -->
+      <rect x="580" y="0" width="190" height="32" rx="16" fill="#0D2418" stroke="${status}" stroke-width="1.5"/>
+      <circle cx="598" cy="16" r="5" fill="${status}"/>
+      <text x="612" y="21" fill="${status}" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="900" letter-spacing="1.5">${xml(security)}</text>
 
-    <text x="884" y="614" fill="#708A7A" font-family="Arial, sans-serif" font-size="14" font-weight="700" letter-spacing="1">CONTRACT</text>
-    <text x="884" y="646" fill="#D7E4DC" font-family="monospace" font-size="18" font-weight="700">${xml(compactAddress(scan.token.address))}</text>
-    <text x="1208" y="676" text-anchor="end" fill="#42614D" font-family="Arial, sans-serif" font-size="13" font-weight="700">DATA IS INFORMATIONAL · DYOR</text>
+      <!-- Token Name & Symbol Header -->
+      <g transform="translate(0, 56)">
+        <text x="0" y="44" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="44" font-weight="900" letter-spacing="-0.5">${xml(scan.token.name)}</text>
+        <rect x="0" y="60" width="110" height="28" rx="8" fill="#123522" stroke="#215A3B" stroke-width="1.2"/>
+        <text x="55" y="79" text-anchor="middle" fill="#00E86B" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="900">$${xml(scan.token.symbol)}</text>
+        <text x="122" y="80" fill="#7C9E8C" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="700">· ${xml(scan.market.dexId?.toUpperCase() ?? "UNISWAP V4")}</text>
+      </g>
+
+      <!-- Hero Price Glass Card -->
+      <g transform="translate(0, 168)">
+        <rect x="0" y="0" width="770" height="100" rx="20" fill="url(#cardGrad)" stroke="url(#cardBorder)" stroke-width="1.8" filter="url(#drop)"/>
+        <text x="26" y="32" fill="#698E7B" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="900" letter-spacing="2">CURRENT PRICE</text>
+        <text x="26" y="78" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="44" font-weight="900">${xml(formatUsd(scan.market.priceUsd))}</text>
+
+        <!-- 24h Change Pill -->
+        <rect x="490" y="24" width="254" height="52" rx="16" fill="${isUp ? "#0B301B" : "#381014"}" stroke="${changeColor}" stroke-width="1.5"/>
+        <text x="617" y="57" text-anchor="middle" fill="${changeColor}" font-family="system-ui, -apple-system, sans-serif" font-size="23" font-weight="900">
+          ${isUp ? "↗" : "↘"} ${xml(formatPercent(priceChange, true))}
+        </text>
+      </g>
+
+      <!-- 6-Metric High-Contrast Grid -->
+      <g transform="translate(0, 286)">
+        ${gridCard(0, 0, 244, 94, "MARKET CAP", formatUsd(marketCap), "#00E86B")}
+        ${gridCard(262, 0, 244, 94, "LIQUIDITY (LP)", formatUsd(scan.market.liquidityUsd), "#F4F8F5")}
+        ${gridCard(524, 0, 246, 94, "24H VOLUME", formatUsd(scan.market.volume24hUsd), "#F4F8F5")}
+
+        ${gridCard(0, 108, 244, 94, "TOTAL HOLDERS", scan.token.holdersCount?.toLocaleString() ?? "N/A", "#F4F8F5")}
+        ${gridCard(262, 108, 244, 94, "TOP 10 CONCENTRATION", formatPercent(scan.holders.top10Percent), scan.holders.top10Percent && scan.holders.top10Percent > 50 ? "#FFB830" : "#00E86B")}
+        <g transform="translate(524, 108)">
+          <rect x="0" y="0" width="246" height="94" rx="18" fill="url(#cardGrad)" stroke="url(#cardBorder)" stroke-width="1.5" filter="url(#drop)"/>
+          <text x="20" y="28" fill="#698E7B" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="900" letter-spacing="1.5">1H FLOW</text>
+          <text x="20" y="60" fill="#F4F8F5" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="900">${buys}B <tspan fill="#668777">/</tspan> <tspan fill="#FF7B82">${sells}S</tspan></text>
+          <!-- Ratio Bar -->
+          <rect x="20" y="72" width="206" height="7" rx="3.5" fill="#FF4D5A"/>
+          <rect x="20" y="72" width="${(buyRatio / 100) * 206}" height="7" rx="3.5" fill="#00E86B"/>
+        </g>
+      </g>
+
+      <!-- Bottom Contract & Intelligence Strip -->
+      <g transform="translate(0, 508)">
+        <rect x="0" y="0" width="770" height="90" rx="18" fill="#08170F" stroke="#173B27" stroke-width="1.5"/>
+        <text x="24" y="34" fill="#618371" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="900" letter-spacing="1.5">CONTRACT ADDRESS</text>
+        <rect x="24" y="44" width="370" height="32" rx="8" fill="#0E2619" stroke="#1D4C32" stroke-width="1"/>
+        <text x="38" y="66" fill="#BCE0CC" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="15" font-weight="700">${xml(compactAddress(scan.token.address))}</text>
+
+        <circle cx="430" cy="60" r="4" fill="#00E86B"/>
+        <text x="444" y="65" fill="#7E9F8E" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="700">${scan.verified ? "Verified Contract" : "Unverified"}</text>
+
+        <circle cx="585" cy="60" r="4" fill="#00E86B"/>
+        <text x="599" y="65" fill="#7E9F8E" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="700">${scan.warnings.length === 0 ? "Zero Honeypot Flags" : `${scan.warnings.length} Warnings Reported`}</text>
+      </g>
+
+    </g>
+
+    <!-- Right Showcase Column (Mascot & Lore) -->
+    <g transform="translate(864, 48)">
+      <rect x="0" y="0" width="350" height="588" rx="28" fill="url(#mascotBackdrop)" stroke="url(#cardBorder)" stroke-width="2" filter="url(#drop)"/>
+      <rect x="0" y="0" width="350" height="588" rx="28" fill="none" stroke="#00E86B" stroke-width="1" opacity="0.3"/>
+
+      <!-- Mascot Showcase Portrait -->
+      <circle cx="175" cy="180" r="130" fill="#00E86B" opacity="0.15" filter="url(#softGlow)"/>
+      <clipPath id="tokenMascotClip"><rect x="25" y="24" width="300" height="300" rx="22"/></clipPath>
+      <image href="${mascotUrl}" x="25" y="24" width="300" height="300" preserveAspectRatio="xMidYMid slice" clip-path="url(#tokenMascotClip)"/>
+
+      <!-- Key Snapshot Widgets -->
+      <g transform="translate(24, 344)">
+        <rect x="0" y="0" width="302" height="96" rx="16" fill="#071810" stroke="#173B28" stroke-width="1.2"/>
+        <text x="20" y="32" fill="#5F8270" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="900" letter-spacing="1.5">PAIR AGE</text>
+        <text x="20" y="70" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="28" font-weight="900">${xml(formatAge(scan.market.pairCreatedAt))}</text>
+      </g>
+
+      <g transform="translate(24, 454)">
+        <rect x="0" y="0" width="302" height="96" rx="16" fill="#071810" stroke="#173B28" stroke-width="1.2"/>
+        <text x="20" y="32" fill="#5F8270" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="900" letter-spacing="1.5">DEX STATUS</text>
+        <text x="20" y="68" fill="#00E86B" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="900">${scan.market.dexPaid ? "DEX PAID 🟢" : "COMMUNITY ⚪"}</text>
+      </g>
+    </g>
+
+    <!-- Footer DYOR Tag -->
+    <text x="1214" y="666" text-anchor="end" fill="#4B6C59" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="800">DATA IS INFORMATIONAL · DYOR</text>
   </svg>`;
+
   return sharp(Buffer.from(svg)).png({ compressionLevel: 9 }).toBuffer();
+}
+
+function gridCard(x: number, y: number, w: number, h: number, label: string, value: string, color = "#F4F8F5"): string {
+  return `
+    <g transform="translate(${x}, ${y})">
+      <rect x="0" y="0" width="${w}" height="${h}" rx="18" fill="url(#cardGrad)" stroke="url(#cardBorder)" stroke-width="1.5" filter="url(#drop)"/>
+      <text x="20" y="28" fill="#698E7B" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="900" letter-spacing="1.5">${xml(label)}</text>
+      <text x="20" y="66" fill="${color}" font-family="system-ui, -apple-system, sans-serif" font-size="25" font-weight="900">${xml(value)}</text>
+    </g>
+  `;
 }
 
 export async function generatePnlCard(call: CallRecord, scan: TokenScan): Promise<Buffer> {
@@ -106,28 +357,96 @@ export async function generatePnlCard(call: CallRecord, scan: TokenScan): Promis
   const currentReturn = calculateReturn(call.entryMarketCapUsd, currentMarketCap);
   const athMultiple = calculateMultiple(call.entryMarketCapUsd, call.athMarketCapUsd);
   const positive = (currentReturn ?? 0) >= 0;
+  const pnlColor = positive ? "#00E86B" : "#FF5C64";
+
   const svg = `
   <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
-    <rect width="1280" height="720" fill="#07140D"/>
-    <rect x="24" y="24" width="1232" height="672" rx="36" fill="#0D2116" stroke="#1F4931" stroke-width="2"/>
-    <rect x="24" y="24" width="12" height="672" rx="6" fill="#00E86B"/>
-    <text x="74" y="82" fill="#00E86B" font-family="Arial, sans-serif" font-size="22" font-weight="800" letter-spacing="4">KAPISCOUT PNL</text>
-    <text x="74" y="170" fill="#F4F7F4" font-family="Arial, sans-serif" font-size="55" font-weight="900">$${xml(call.symbol)}</text>
-    <text x="74" y="218" fill="#8AA596" font-family="Arial, sans-serif" font-size="22" font-weight="700">CALLED BY ${xml(call.username.toUpperCase())} · ${xml(formatAge(call.calledAt))} AGO</text>
-    <text x="74" y="300" fill="#6F8E7C" font-family="Arial, sans-serif" font-size="17" font-weight="700" letter-spacing="2">CURRENT RETURN</text>
-    <text x="74" y="390" fill="${positive ? "#00E86B" : "#FF6666"}" font-family="Arial, sans-serif" font-size="86" font-weight="900">${xml(formatPercent(currentReturn, true))}</text>
-    ${metric(74, 448, "ENTRY MC", formatUsd(call.entryMarketCapUsd))}
-    ${metric(327, 448, "CURRENT MC", formatUsd(currentMarketCap))}
-    ${metric(580, 448, "ATH", athMultiple == null ? "N/A" : `${athMultiple.toFixed(2)}x`)}
-    <rect x="884" y="58" width="324" height="510" rx="30" fill="#00C805"/>
-    <clipPath id="pnlMascot"><rect x="900" y="76" width="292" height="292" rx="24"/></clipPath>
-    <image href="${mascotUrl}" x="900" y="76" width="292" height="292" preserveAspectRatio="xMidYMid slice" clip-path="url(#pnlMascot)"/>
-    <text x="920" y="424" fill="#05230F" font-family="Arial, sans-serif" font-size="16" font-weight="800" letter-spacing="2">ATH MARKET CAP</text>
-    <text x="920" y="470" fill="#031B0B" font-family="Arial, sans-serif" font-size="32" font-weight="900">${xml(formatUsd(call.athMarketCapUsd))}</text>
-    <text x="920" y="518" fill="#05230F" font-family="Arial, sans-serif" font-size="16" font-weight="800" letter-spacing="2">ROBINHOOD CHAIN</text>
-    <text x="74" y="646" fill="#D7E4DC" font-family="monospace" font-size="18" font-weight="700">${xml(compactAddress(call.tokenAddress))}</text>
-    <text x="1208" y="676" text-anchor="end" fill="#42614D" font-family="Arial, sans-serif" font-size="13" font-weight="700">PERFORMANCE SINCE FIRST CALL</text>
+    ${COMMON_DEFS}
+    <rect width="1280" height="720" fill="url(#canvasGrad)"/>
+    <rect width="1280" height="720" fill="url(#grid)"/>
+
+    <!-- Ambient Glows -->
+    <circle cx="340" cy="380" r="280" fill="${pnlColor}" opacity="0.1" filter="url(#softGlow)"/>
+    <circle cx="1060" cy="180" r="260" fill="#FFD166" opacity="0.08" filter="url(#softGlow)"/>
+
+    <!-- Main Chassis Border -->
+    <rect x="24" y="24" width="1232" height="672" rx="32" fill="none" stroke="url(#cardBorder)" stroke-width="2"/>
+    <rect x="24" y="24" width="10" height="672" rx="5" fill="${positive ? "url(#emeraldGrad)" : "url(#redGrad)"}"/>
+
+    <!-- Left Content -->
+    <g transform="translate(68, 52)">
+
+      <!-- Top Header Navigation -->
+      <rect x="0" y="0" width="190" height="34" rx="17" fill="#0E2B1B" stroke="#1F5334" stroke-width="1.5"/>
+      <circle cx="18" cy="17" r="5" fill="#00E86B"/>
+      <text x="32" y="23" fill="#00E86B" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="900" letter-spacing="2">KAPISCOUT PNL</text>
+
+      <rect x="204" y="0" width="186" height="34" rx="17" fill="#1C1808" stroke="#524314" stroke-width="1.5"/>
+      <circle cx="222" cy="17" r="4.5" fill="#FFD166"/>
+      <text x="236" y="23" fill="#FFD166" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="900" letter-spacing="1.5">FIRST-CALL PROOF</text>
+
+      <!-- Token & Caller Subtitle -->
+      <g transform="translate(0, 58)">
+        <text x="0" y="48" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="52" font-weight="900">$${xml(call.symbol)}</text>
+        <rect x="0" y="66" width="460" height="34" rx="10" fill="#0C2016" stroke="#1A462F" stroke-width="1.2"/>
+        <text x="18" y="89" fill="#92B3A1" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="800">
+          CALLED BY <tspan fill="#00E86B">@${xml(call.username.toUpperCase())}</tspan> · ${xml(formatAge(call.calledAt)).toUpperCase()} AGO
+        </text>
+      </g>
+
+      <!-- Hero Return Giant Display -->
+      <g transform="translate(0, 184)">
+        <rect x="0" y="0" width="760" height="156" rx="24" fill="url(#cardGrad)" stroke="url(#cardBorder)" stroke-width="1.8" filter="url(#drop)"/>
+        <text x="32" y="42" fill="#678E7A" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="900" letter-spacing="2">CURRENT RETURN FROM FIRST CALL</text>
+        <text x="32" y="126" fill="${pnlColor}" font-family="system-ui, -apple-system, sans-serif" font-size="78" font-weight="900" letter-spacing="-1">
+          ${xml(formatPercent(currentReturn, true))}
+        </text>
+      </g>
+
+      <!-- 3-Metric Performance Compare Grid -->
+      <g transform="translate(0, 360)">
+        ${gridCard(0, 0, 240, 108, "ENTRY MARKET CAP", formatUsd(call.entryMarketCapUsd), "#9CBAB0")}
+        ${gridCard(260, 0, 240, 108, "CURRENT MARKET CAP", formatUsd(currentMarketCap), "#FFFFFF")}
+        ${gridCard(520, 0, 240, 108, "ATH MULTIPLE", athMultiple == null ? "N/A" : `${athMultiple.toFixed(2)}x`, "#FFD166")}
+      </g>
+
+      <!-- Contract Bar -->
+      <g transform="translate(0, 492)">
+        <rect x="0" y="0" width="760" height="80" rx="16" fill="#08170F" stroke="#173B27" stroke-width="1.5"/>
+        <text x="24" y="30" fill="#618371" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="900" letter-spacing="1.5">VERIFIED ONCHAIN RECEIPT</text>
+        <text x="24" y="58" fill="#BCE0CC" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="15" font-weight="700">${xml(compactAddress(call.tokenAddress))}</text>
+        <text x="736" y="58" text-anchor="end" fill="#587C68" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="800">ROBINHOOD CHAIN</text>
+      </g>
+    </g>
+
+    <!-- Right Mascot Showcase Panel -->
+    <g transform="translate(856, 52)">
+      <rect x="0" y="0" width="356" height="580" rx="28" fill="url(#mascotBackdrop)" stroke="url(#cardBorder)" stroke-width="2" filter="url(#drop)"/>
+      <rect x="0" y="0" width="356" height="580" rx="28" fill="none" stroke="#FFD166" stroke-width="1" opacity="0.3"/>
+
+      <!-- Mascot Portrait -->
+      <circle cx="178" cy="180" r="130" fill="#00E86B" opacity="0.12" filter="url(#softGlow)"/>
+      <clipPath id="pnlMascotClip"><rect x="28" y="24" width="300" height="300" rx="24"/></clipPath>
+      <image href="${mascotUrl}" x="28" y="24" width="300" height="300" preserveAspectRatio="xMidYMid slice" clip-path="url(#pnlMascotClip)"/>
+
+      <!-- ATH High Peak Showcase Box -->
+      <g transform="translate(24, 344)">
+        <rect x="0" y="0" width="308" height="100" rx="18" fill="#15170A" stroke="#4F4414" stroke-width="1.5"/>
+        <text x="22" y="34" fill="#FFD166" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="900" letter-spacing="2">ALL-TIME HIGH MARKET CAP</text>
+        <text x="22" y="74" fill="#FFF1C2" font-family="system-ui, -apple-system, sans-serif" font-size="32" font-weight="900">${xml(formatUsd(call.athMarketCapUsd))}</text>
+      </g>
+
+      <g transform="translate(24, 458)">
+        <rect x="0" y="0" width="308" height="96" rx="18" fill="#071810" stroke="#173B28" stroke-width="1.2"/>
+        <text x="22" y="34" fill="#5F8270" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="900" letter-spacing="1.5">RECORD STATUS</text>
+        <text x="22" y="72" fill="#00E86B" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="900">IMMUTABLE RECEIPT 🔒</text>
+      </g>
+    </g>
+
+    <!-- Footer -->
+    <text x="1212" y="666" text-anchor="end" fill="#4B6C59" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="800">PERFORMANCE FROM FIRST CALL · NO OVERWRITES</text>
   </svg>`;
+
   return sharp(Buffer.from(svg)).png({ compressionLevel: 9 }).toBuffer();
 }
 
@@ -138,22 +457,84 @@ export async function generateGroupSummaryCard(chatTitle: string, stats: CallerS
     ((b.athMarketCapUsd ?? 0) / (b.entryMarketCapUsd ?? 1)) - ((a.athMarketCapUsd ?? 0) / (a.entryMarketCapUsd ?? 1)),
   )[0];
   const hits2x = valid.filter((call) => (call.athMarketCapUsd ?? 0) >= (call.entryMarketCapUsd ?? Infinity) * 2).length;
-  const topRows = stats.slice(0, 3).map((item, index) => `
-    <text x="90" y="${438 + index * 58}" fill="#718C7C" font-family="Arial,sans-serif" font-size="18" font-weight="800">0${index + 1}</text>
-    <text x="138" y="${438 + index * 58}" fill="#F4F7F4" font-family="Arial,sans-serif" font-size="21" font-weight="800">${xml(item.username)}</text>
-    <text x="700" y="${438 + index * 58}" text-anchor="end" fill="#00E86B" font-family="Arial,sans-serif" font-size="20" font-weight="900">${item.bestMultiple?.toFixed(2) ?? "—"}x</text>
-  `).join("");
   const bestMultiple = best?.entryMarketCapUsd && best.athMarketCapUsd ? best.athMarketCapUsd / best.entryMarketCapUsd : null;
+
+  const topRows = stats.slice(0, 3).map((item, index) => {
+    const y = 398 + index * 64;
+    const medal = index === 0 ? "#FFD166" : index === 1 ? "#D2E2D9" : "#CD8C58";
+    return `
+      <g transform="translate(0, ${y})">
+        <rect x="0" y="0" width="690" height="54" rx="14" fill="#0A1E13" stroke="#18422A" stroke-width="1.2"/>
+        <rect x="16" y="12" width="34" height="30" rx="8" fill="${medal}" opacity="0.2"/>
+        <text x="33" y="32" text-anchor="middle" fill="${medal}" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="900">0${index + 1}</text>
+        <text x="68" y="34" fill="#F4F8F5" font-family="system-ui, -apple-system, sans-serif" font-size="19" font-weight="800">@${xml(item.username)}</text>
+        <text x="662" y="34" text-anchor="end" fill="#00E86B" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="900">${item.bestMultiple?.toFixed(2) ?? "—"}x</text>
+      </g>
+    `;
+  }).join("");
+
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
-    <rect width="1280" height="720" fill="#06120C"/><rect x="24" y="24" width="1232" height="672" rx="30" fill="#0A1B12" stroke="#1D432E" stroke-width="2"/><rect x="24" y="24" width="8" height="672" rx="4" fill="#00E86B"/>
-    <text x="74" y="76" fill="#00E86B" font-family="Arial,sans-serif" font-size="19" font-weight="900" letter-spacing="4">KAPISCOUT · GROUP REPORT</text>
-    <text x="74" y="144" fill="#F4F7F4" font-family="Arial,sans-serif" font-size="42" font-weight="900">${xml(chatTitle.slice(0, 38))}</text>
-    ${metric(74, 190, "CALLS", String(calls.length))}${metric(327, 190, "2X HITS", String(hits2x))}${metric(580, 190, "BEST", bestMultiple == null ? "N/A" : `${bestMultiple.toFixed(2)}x`)}
-    <text x="74" y="362" fill="#6F8E7C" font-family="Arial,sans-serif" font-size="15" font-weight="900" letter-spacing="2">TOP CALLERS</text>${topRows || `<text x="90" y="438" fill="#718C7C" font-family="Arial,sans-serif" font-size="20">No priced calls yet</text>`}
-    <rect x="864" y="58" width="344" height="570" rx="28" fill="#00C805"/><clipPath id="groupCapy"><rect x="886" y="82" width="300" height="300" rx="22"/></clipPath><image href="${mascotUrl}" x="886" y="82" width="300" height="300" preserveAspectRatio="xMidYMid slice" clip-path="url(#groupCapy)"/>
-    <text x="902" y="438" fill="#05230F" font-family="Arial,sans-serif" font-size="16" font-weight="900" letter-spacing="2">BEST CALL</text><text x="902" y="488" fill="#031B0B" font-family="Arial,sans-serif" font-size="38" font-weight="900">${best ? `$${xml(best.symbol)}` : "—"}</text><text x="902" y="532" fill="#05230F" font-family="Arial,sans-serif" font-size="19" font-weight="800">${best ? xml(best.username) : "Waiting for alpha"}</text>
-    <text x="74" y="662" fill="#526E5D" font-family="Arial,sans-serif" font-size="14" font-weight="700">ROBINHOOD CHAIN · PERFORMANCE FROM FIRST CALL</text>
+    ${COMMON_DEFS}
+    <rect width="1280" height="720" fill="url(#canvasGrad)"/>
+    <rect width="1280" height="720" fill="url(#grid)"/>
+
+    <circle cx="1100" cy="140" r="300" fill="#00E86B" opacity="0.1" filter="url(#softGlow)"/>
+
+    <!-- Main Chassis Border -->
+    <rect x="24" y="24" width="1232" height="672" rx="32" fill="none" stroke="url(#cardBorder)" stroke-width="2"/>
+    <rect x="24" y="24" width="10" height="672" rx="5" fill="url(#emeraldGrad)"/>
+
+    <!-- Left Content -->
+    <g transform="translate(68, 52)">
+
+      <!-- Top Header Navigation -->
+      <rect x="0" y="0" width="248" height="34" rx="17" fill="#0E2B1B" stroke="#1F5334" stroke-width="1.5"/>
+      <circle cx="18" cy="17" r="5" fill="#00E86B"/>
+      <text x="32" y="23" fill="#00E86B" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="900" letter-spacing="2">COMMUNITY PERFORMANCE</text>
+
+      <!-- Group Title -->
+      <text x="0" y="96" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="44" font-weight="900">${xml(chatTitle.slice(0, 34))}</text>
+      <text x="0" y="128" fill="#7E9F8E" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="700">Official Robinhood Chain Alpha &amp; Call Recap</text>
+
+      <!-- 3 Summary Metrics -->
+      <g transform="translate(0, 154)">
+        ${gridCard(0, 0, 218, 96, "TOTAL CALLS", String(calls.length), "#FFFFFF")}
+        ${gridCard(236, 0, 218, 96, "2X+ ALPHA HITS", String(hits2x), "#00E86B")}
+        ${gridCard(472, 0, 218, 96, "BEST MULTIPLIER", bestMultiple == null ? "N/A" : `${bestMultiple.toFixed(2)}x`, "#FFD166")}
+      </g>
+
+      <!-- Leaderboard Header & Rows -->
+      <g transform="translate(0, 280)">
+        <text x="0" y="26" fill="#6A8E7C" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="900" letter-spacing="2">TOP GROUP CALLERS</text>
+        ${topRows || `<text x="0" y="70" fill="#718C7C" font-family="system-ui, -apple-system, sans-serif" font-size="20">No recorded calls in this group yet.</text>`}
+      </g>
+    </g>
+
+    <!-- Right Showcase (Best Call) -->
+    <g transform="translate(830, 52)">
+      <rect x="0" y="0" width="382" height="580" rx="28" fill="url(#mascotBackdrop)" stroke="url(#cardBorder)" stroke-width="2" filter="url(#drop)"/>
+
+      <!-- Mascot Frame -->
+      <circle cx="191" cy="170" r="120" fill="#00E86B" opacity="0.12" filter="url(#softGlow)"/>
+      <clipPath id="groupMascotClip"><rect x="36" y="24" width="310" height="290" rx="24"/></clipPath>
+      <image href="${mascotUrl}" x="36" y="24" width="310" height="290" preserveAspectRatio="xMidYMid slice" clip-path="url(#groupMascotClip)"/>
+
+      <!-- Best Call Box -->
+      <g transform="translate(24, 334)">
+        <rect x="0" y="0" width="334" height="216" rx="22" fill="#071810" stroke="#1A422D" stroke-width="1.5"/>
+        <rect x="20" y="20" width="98" height="24" rx="12" fill="#1C1808" stroke="#524314" stroke-width="1"/>
+        <text x="69" y="36" text-anchor="middle" fill="#FFD166" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="900" letter-spacing="1.5">TOP ALPHA</text>
+
+        <text x="20" y="90" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="38" font-weight="900">${best ? `$${xml(best.symbol)}` : "—"}</text>
+        <text x="20" y="128" fill="#00E86B" font-family="system-ui, -apple-system, sans-serif" font-size="26" font-weight="900">${bestMultiple ? `${bestMultiple.toFixed(2)}x PEAK` : "Waiting for alpha"}</text>
+        <text x="20" y="164" fill="#7E9F8E" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="700">${best ? `Called by @${xml(best.username)}` : "First call pending"}</text>
+      </g>
+    </g>
+
+    <!-- Footer -->
+    <text x="68" y="666" fill="#4B6C59" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="800">ROBINHOOD CHAIN · REAL-TIME CALL VERIFICATION</text>
   </svg>`;
+
   return sharp(Buffer.from(svg)).png({ compressionLevel: 9 }).toBuffer();
 }
 
@@ -173,119 +554,291 @@ export interface WalletAlertCardInput {
 
 export async function generateWalletAlertCard(input: WalletAlertCardInput): Promise<Buffer> {
   const artwork = await tokenArtwork(input.scan);
-  const actionColor = input.direction === "BUY" ? "#00E86B" : input.direction === "SELL" ? "#FF5C64" : "#55A7FF";
-  const softColor = input.direction === "BUY" ? "#0D2B1A" : input.direction === "SELL" ? "#301417" : "#10243A";
-  const heading = input.isKol ? "SMART MONEY" : "WALLET WATCH";
+  const actionColor = input.direction === "BUY" ? "#00E86B" : input.direction === "SELL" ? "#FF4D5A" : "#38B6FF";
+  const softColor = input.direction === "BUY" ? "#0C2918" : input.direction === "SELL" ? "#341014" : "#0E2436";
+  const heading = input.isKol ? "SMART MONEY RADAR" : "WATCHLIST SIGNAL";
   const value = input.valueUsd == null ? "VALUE PENDING" : formatUsd(input.valueUsd);
+
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
-    <defs>
-      <filter id="glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="22"/></filter>
-      <clipPath id="coin"><circle cx="1040" cy="262" r="148"/></clipPath>
-    </defs>
-    <rect width="1280" height="720" fill="#050C08"/>
-    <circle cx="1110" cy="110" r="260" fill="${actionColor}" opacity=".09" filter="url(#glow)"/>
-    <rect x="28" y="28" width="1224" height="664" rx="34" fill="#0A1710" stroke="#1B3526" stroke-width="2"/>
-    <rect x="28" y="28" width="10" height="664" rx="5" fill="${actionColor}"/>
+    ${COMMON_DEFS}
+    <rect width="1280" height="720" fill="url(#canvasGrad)"/>
+    <rect width="1280" height="720" fill="url(#grid)"/>
 
-    <text x="78" y="82" fill="#00E86B" font-family="Arial,sans-serif" font-size="20" font-weight="900" letter-spacing="4">KAPISCOUT</text>
-    <text x="260" y="82" fill="#6F8A79" font-family="Arial,sans-serif" font-size="16" font-weight="800" letter-spacing="2">${heading}</text>
-    <rect x="78" y="111" width="728" height="1" fill="#1B3526"/>
+    <circle cx="1060" cy="240" r="300" fill="${actionColor}" opacity="0.12" filter="url(#softGlow)"/>
 
-    <rect x="78" y="148" width="150" height="48" rx="24" fill="${softColor}" stroke="${actionColor}"/>
-    <circle cx="106" cy="172" r="6" fill="${actionColor}"/>
-    <text x="124" y="180" fill="${actionColor}" font-family="Arial,sans-serif" font-size="20" font-weight="900">${input.direction}</text>
-    <text x="78" y="266" fill="#F5F8F5" font-family="Arial,sans-serif" font-size="64" font-weight="900">$${xml(input.symbol.slice(0,18))}</text>
-    <text x="78" y="312" fill="#89A093" font-family="Arial,sans-serif" font-size="22" font-weight="700">${xml(input.label.slice(0,34))} · ${xml(compactAddress(input.walletAddress as `0x${string}`))}</text>
+    <!-- Main Chassis Border -->
+    <rect x="24" y="24" width="1232" height="672" rx="32" fill="none" stroke="url(#cardBorder)" stroke-width="2"/>
+    <rect x="24" y="24" width="10" height="672" rx="5" fill="${actionColor}"/>
 
-    <text x="78" y="386" fill="#60766A" font-family="Arial,sans-serif" font-size="15" font-weight="900" letter-spacing="2">TRADE VALUE</text>
-    <text x="78" y="452" fill="${actionColor}" font-family="Arial,sans-serif" font-size="54" font-weight="900">${xml(value)}</text>
-    <text x="78" y="494" fill="#A9BAB0" font-family="Arial,sans-serif" font-size="20" font-weight="700">${xml(compactNumber(input.tokenAmount))} ${xml(input.symbol)} moved</text>
+    <!-- Left Content -->
+    <g transform="translate(68, 52)">
 
-    ${alertMetric(78, 542, "PRICE", formatUsd(input.priceUsd))}
-    ${alertMetric(318, 542, "MARKET CAP", formatUsd(input.marketCapUsd))}
-    ${alertMetric(558, 542, "LIQUIDITY", formatUsd(input.liquidityUsd))}
+      <!-- Top Header Navigation -->
+      <rect x="0" y="0" width="138" height="34" rx="17" fill="#0E2B1B" stroke="#1F5334" stroke-width="1.5"/>
+      <circle cx="18" cy="17" r="5" fill="#00E86B"/>
+      <text x="32" y="23" fill="#00E86B" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="900" letter-spacing="2">KAPISCOUT</text>
 
-    <circle cx="1040" cy="262" r="166" fill="${softColor}" stroke="${actionColor}" stroke-width="2"/>
-    <image href="${artwork}" x="892" y="114" width="296" height="296" preserveAspectRatio="xMidYMid slice" clip-path="url(#coin)"/>
-    <circle cx="1158" cy="382" r="34" fill="${actionColor}"/>
-    <text x="1158" y="394" text-anchor="middle" fill="#06100A" font-family="Arial,sans-serif" font-size="31" font-weight="900">${input.direction === "BUY" ? "↗" : input.direction === "SELL" ? "↘" : "→"}</text>
-    <text x="1040" y="494" text-anchor="middle" fill="#71897A" font-family="Arial,sans-serif" font-size="15" font-weight="900" letter-spacing="2">ROBINHOOD CHAIN</text>
-    <text x="1040" y="531" text-anchor="middle" fill="#F5F8F5" font-family="Arial,sans-serif" font-size="23" font-weight="900">LIVE WALLET SIGNAL</text>
-    <text x="1202" y="656" text-anchor="end" fill="#41584A" font-family="Arial,sans-serif" font-size="13" font-weight="800">OBSERVED ONCHAIN · DYOR</text>
+      <rect x="150" y="0" width="190" height="34" rx="17" fill="${softColor}" stroke="${actionColor}" stroke-width="1.2"/>
+      <text x="166" y="23" fill="${actionColor}" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="900" letter-spacing="1.5">${heading}</text>
+
+      <!-- Action Pill Badge & Token Symbol -->
+      <g transform="translate(0, 56)">
+        <rect x="0" y="0" width="124" height="42" rx="21" fill="${softColor}" stroke="${actionColor}" stroke-width="2"/>
+        <circle cx="24" cy="21" r="5.5" fill="${actionColor}"/>
+        <text x="40" y="28" fill="${actionColor}" font-family="system-ui, -apple-system, sans-serif" font-size="18" font-weight="900">${input.direction}</text>
+
+        <text x="0" y="104" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="56" font-weight="900">$${xml(input.symbol.slice(0, 18))}</text>
+        <text x="0" y="138" fill="#8EAFA0" font-family="system-ui, -apple-system, sans-serif" font-size="19" font-weight="700">
+          ${xml(input.label.slice(0, 32))} · <tspan fill="#D5E8DD" font-family="monospace">${xml(compactAddress(input.walletAddress as `0x${string}`))}</tspan>
+        </text>
+      </g>
+
+      <!-- Hero Trade Value Box -->
+      <g transform="translate(0, 218)">
+        <rect x="0" y="0" width="760" height="136" rx="22" fill="url(#cardGrad)" stroke="url(#cardBorder)" stroke-width="1.8" filter="url(#drop)"/>
+        <text x="28" y="38" fill="#678E7A" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="900" letter-spacing="2">ESTIMATED TRADE VALUE</text>
+        <text x="28" y="98" fill="${actionColor}" font-family="system-ui, -apple-system, sans-serif" font-size="54" font-weight="900">${xml(value)}</text>
+        <text x="28" y="122" fill="#9FBDB0" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="700">${xml(compactNumber(input.tokenAmount))} ${xml(input.symbol)} transacted</text>
+      </g>
+
+      <!-- 3 Metrics -->
+      <g transform="translate(0, 374)">
+        ${gridCard(0, 0, 240, 100, "TOKEN PRICE", formatUsd(input.priceUsd), "#FFFFFF")}
+        ${gridCard(260, 0, 240, 100, "MARKET CAP", formatUsd(input.marketCapUsd), "#FFFFFF")}
+        ${gridCard(520, 0, 240, 100, "LIQUIDITY", formatUsd(input.liquidityUsd), "#FFFFFF")}
+      </g>
+
+      <!-- Footer Tag -->
+      <g transform="translate(0, 494)">
+        <rect x="0" y="0" width="760" height="74" rx="16" fill="#08170F" stroke="#173B27" stroke-width="1.5"/>
+        <circle cx="28" cy="37" r="4.5" fill="${actionColor}"/>
+        <text x="44" y="42" fill="#95B7A6" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="700">Observed Real-Time Transfer on Robinhood Chain</text>
+      </g>
+    </g>
+
+    <!-- Right Artwork Showcase -->
+    <g transform="translate(856, 52)">
+      <rect x="0" y="0" width="356" height="580" rx="28" fill="url(#mascotBackdrop)" stroke="url(#cardBorder)" stroke-width="2" filter="url(#drop)"/>
+
+      <!-- Circular Avatar & Direction Arrow -->
+      <circle cx="178" cy="210" r="126" fill="${softColor}" stroke="${actionColor}" stroke-width="2.5"/>
+      <clipPath id="alertArtClip"><circle cx="178" cy="210" r="118"/></clipPath>
+      <image href="${artwork}" x="60" y="92" width="236" height="236" preserveAspectRatio="xMidYMid slice" clip-path="url(#alertArtClip)"/>
+
+      <!-- Direction Arrow Badge -->
+      <circle cx="264" cy="296" r="30" fill="${actionColor}" filter="url(#drop)"/>
+      <text x="264" y="307" text-anchor="middle" fill="#041208" font-family="system-ui, -apple-system, sans-serif" font-size="30" font-weight="900">
+        ${input.direction === "BUY" ? "↗" : input.direction === "SELL" ? "↘" : "→"}
+      </text>
+
+      <!-- Bottom Card Info -->
+      <g transform="translate(24, 386)">
+        <rect x="0" y="0" width="308" height="154" rx="20" fill="#071810" stroke="#173B28" stroke-width="1.5"/>
+        <text x="154" y="46" text-anchor="middle" fill="#5F8270" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="900" letter-spacing="2">ROBINHOOD CHAIN</text>
+        <text x="154" y="86" text-anchor="middle" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="900">Live Wallet Signal</text>
+        <text x="154" y="122" text-anchor="middle" fill="#00E86B" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="800">AUTOMATIC DETECT ⚡</text>
+      </g>
+    </g>
+
+    <!-- Footer -->
+    <text x="1212" y="666" text-anchor="end" fill="#4B6C59" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="800">ONCHAIN EVIDENCE · DYOR</text>
   </svg>`;
+
   return sharp(Buffer.from(svg)).png({ compressionLevel: 9 }).toBuffer();
 }
 
-export async function generatePaperPortfolioCard(snapshot:PaperPortfolioSnapshot):Promise<Buffer>{
-  const positive=snapshot.totalPnlUsd>=0;
-  const accent=positive?"#00E86B":"#FF5C64";
-  const rows=snapshot.positions.slice(0,4).map((position,index)=>{
-    const y=414+index*56;const pnlColor=position.unrealizedPnlUsd>=0?"#00E86B":"#FF6970";
-    return `<text x="80" y="${y}" fill="#F3F7F4" font-family="Arial,sans-serif" font-size="20" font-weight="900">$${xml(position.symbol.slice(0,14))}</text><text x="330" y="${y}" fill="#8BA094" font-family="Arial,sans-serif" font-size="18" font-weight="700">${xml(formatUsd(position.liquidationValueUsd))}</text><text x="575" y="${y}" text-anchor="end" fill="${pnlColor}" font-family="Arial,sans-serif" font-size="18" font-weight="900">${xml(formatSignedCardUsd(position.unrealizedPnlUsd))}</text><text x="635" y="${y}" fill="${position.quoteAvailable?"#5C7767":"#FFB45C"}" font-family="Arial,sans-serif" font-size="14" font-weight="800">${position.quoteAvailable?"LIVE EXIT":"NO EXIT"}</text>`;
+export async function generatePaperPortfolioCard(snapshot: PaperPortfolioSnapshot): Promise<Buffer> {
+  const positive = snapshot.totalPnlUsd >= 0;
+  const accent = positive ? "#00E86B" : "#FF5C64";
+
+  const rows = snapshot.positions.slice(0, 4).map((position, index) => {
+    const y = 412 + index * 54;
+    const pnlColor = position.unrealizedPnlUsd >= 0 ? "#00E86B" : "#FF6970";
+    return `
+      <g transform="translate(0, ${y})">
+        <rect x="0" y="0" width="700" height="46" rx="12" fill="#0A1E13" stroke="#163C26" stroke-width="1"/>
+        <text x="18" y="29" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="18" font-weight="900">$${xml(position.symbol.slice(0, 12))}</text>
+        <text x="260" y="29" fill="#8FB2A1" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="700">${xml(formatUsd(position.liquidationValueUsd))}</text>
+        <text x="500" y="29" text-anchor="end" fill="${pnlColor}" font-family="system-ui, -apple-system, sans-serif" font-size="17" font-weight="900">${xml(formatSignedCardUsd(position.unrealizedPnlUsd))}</text>
+        <rect x="540" y="11" width="140" height="24" rx="12" fill="${position.quoteAvailable ? "#0E2B1B" : "#301D0A"}" stroke="${position.quoteAvailable ? "#1D5435" : "#6E4514"}" stroke-width="1"/>
+        <text x="610" y="27" text-anchor="middle" fill="${position.quoteAvailable ? "#00E86B" : "#FFB830"}" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="900">${position.quoteAvailable ? "LIVE UNISWAP V4" : "NO LIQUIDITY"}</text>
+      </g>
+    `;
   }).join("");
-  const status=snapshot.competition.status==="ACTIVE"?"LIVE COMPETITION":"FINAL RESULT";
-  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
-    <rect width="1280" height="720" fill="#050C08"/><circle cx="1120" cy="130" r="330" fill="${accent}" opacity=".07"/>
-    <rect x="26" y="26" width="1228" height="668" rx="34" fill="#0A1710" stroke="#1D3928" stroke-width="2"/><rect x="26" y="26" width="9" height="668" rx="5" fill="${accent}"/>
-    <text x="78" y="78" fill="#00E86B" font-family="Arial,sans-serif" font-size="19" font-weight="900" letter-spacing="4">KAPISCOUT PAPER ARENA</text><text x="1198" y="78" text-anchor="end" fill="#698173" font-family="Arial,sans-serif" font-size="15" font-weight="900" letter-spacing="2">${status}</text>
-    <text x="78" y="142" fill="#F5F8F5" font-family="Arial,sans-serif" font-size="34" font-weight="900">${xml(snapshot.competition.name.slice(0,35))}</text><text x="78" y="178" fill="#7E9588" font-family="Arial,sans-serif" font-size="18" font-weight="700">${xml(snapshot.account.username)} · RANK ${snapshot.rank??"—"} / ${snapshot.participants}</text>
-    <text x="78" y="238" fill="#687F72" font-family="Arial,sans-serif" font-size="14" font-weight="900" letter-spacing="2">LIQUIDATION BALANCE</text><text x="78" y="315" fill="#F5F8F5" font-family="Arial,sans-serif" font-size="70" font-weight="900">${xml(formatUsd(snapshot.equityUsd))}</text><text x="650" y="306" fill="${accent}" font-family="Arial,sans-serif" font-size="38" font-weight="900">${xml(`${snapshot.returnPercent>=0?"+":""}${snapshot.returnPercent.toFixed(2)}%`)}</text>
-    <line x1="78" y1="352" x2="760" y2="352" stroke="#1B3526"/><text x="80" y="385" fill="#60776A" font-family="Arial,sans-serif" font-size="13" font-weight="900" letter-spacing="2">POSITION</text><text x="330" y="385" fill="#60776A" font-family="Arial,sans-serif" font-size="13" font-weight="900" letter-spacing="2">EXIT VALUE</text><text x="575" y="385" text-anchor="end" fill="#60776A" font-family="Arial,sans-serif" font-size="13" font-weight="900" letter-spacing="2">OPEN PNL</text>${rows||`<text x="80" y="438" fill="#789084" font-family="Arial,sans-serif" font-size="20">No open positions</text>`}
-    <rect x="815" y="132" width="383" height="456" rx="26" fill="#0E2117" stroke="#21442F"/>${paperMetric(850,178,"CASH",formatUsd(snapshot.cashBalanceUsd))}${paperMetric(850,280,"POSITIONS",formatUsd(snapshot.positionsValueUsd))}${paperMetric(850,382,"TOTAL PNL",formatSignedCardUsd(snapshot.totalPnlUsd),accent)}${paperMetric(850,484,"RECORD",`${snapshot.account.wins}W / ${snapshot.account.losses}L`)}
-    <text x="78" y="653" fill="#526A5B" font-family="Arial,sans-serif" font-size="14" font-weight="800">VALUES USE LIVE UNISWAP V4 EXIT QUOTES · GAS INCLUDED</text><text x="1198" y="653" text-anchor="end" fill="#526A5B" font-family="Arial,sans-serif" font-size="14" font-weight="800">REFRESHED ${new Date(snapshot.refreshedAt).toISOString().slice(11,19)} UTC</text>
+
+  const status = snapshot.competition.status === "ACTIVE" ? "LIVE COMPETITION" : "FINAL RESULT";
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+    ${COMMON_DEFS}
+    <rect width="1280" height="720" fill="url(#canvasGrad)"/>
+    <rect width="1280" height="720" fill="url(#grid)"/>
+
+    <circle cx="1100" cy="140" r="300" fill="${accent}" opacity="0.1" filter="url(#softGlow)"/>
+
+    <!-- Main Chassis Border -->
+    <rect x="24" y="24" width="1232" height="672" rx="32" fill="none" stroke="url(#cardBorder)" stroke-width="2"/>
+    <rect x="24" y="24" width="10" height="672" rx="5" fill="${accent}"/>
+
+    <!-- Left Column -->
+    <g transform="translate(68, 52)">
+
+      <!-- Top Header Navigation -->
+      <rect x="0" y="0" width="220" height="34" rx="17" fill="#0E2B1B" stroke="#1F5334" stroke-width="1.5"/>
+      <circle cx="18" cy="17" r="5" fill="#00E86B"/>
+      <text x="32" y="23" fill="#00E86B" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="900" letter-spacing="2">KAPISCOUT ARENA</text>
+
+      <rect x="232" y="0" width="170" height="34" rx="17" fill="#0A1F14" stroke="#17442B" stroke-width="1.2"/>
+      <text x="248" y="23" fill="#7EA590" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="800" letter-spacing="1.5">${status}</text>
+
+      <!-- Competition & Username -->
+      <g transform="translate(0, 56)">
+        <text x="0" y="44" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="40" font-weight="900">${xml(snapshot.competition.name.slice(0, 32))}</text>
+        <text x="0" y="76" fill="#88ABA0" font-family="system-ui, -apple-system, sans-serif" font-size="18" font-weight="800">
+          @${xml(snapshot.account.username)} · <tspan fill="#00E86B">RANK #${snapshot.rank ?? "—"}</tspan> OF ${snapshot.participants}
+        </text>
+      </g>
+
+      <!-- Hero Liquidation Balance Card -->
+      <g transform="translate(0, 154)">
+        <rect x="0" y="0" width="700" height="130" rx="22" fill="url(#cardGrad)" stroke="url(#cardBorder)" stroke-width="1.8" filter="url(#drop)"/>
+        <text x="28" y="36" fill="#678E7A" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="900" letter-spacing="2">LIQUIDATION BALANCE (EQUITY)</text>
+        <text x="28" y="98" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="54" font-weight="900">${xml(formatUsd(snapshot.equityUsd))}</text>
+
+        <rect x="490" y="38" width="180" height="54" rx="16" fill="${positive ? "#0B301B" : "#381014"}" stroke="${accent}" stroke-width="1.5"/>
+        <text x="580" y="73" text-anchor="middle" fill="${accent}" font-family="system-ui, -apple-system, sans-serif" font-size="24" font-weight="900">
+          ${snapshot.returnPercent >= 0 ? "+" : ""}${snapshot.returnPercent.toFixed(2)}%
+        </text>
+      </g>
+
+      <!-- Open Positions Table Header & Rows -->
+      <g transform="translate(0, 312)">
+        <text x="0" y="24" fill="#678E7A" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="900" letter-spacing="2">OPEN PORTFOLIO POSITIONS</text>
+        ${rows || `<text x="0" y="70" fill="#789084" font-family="system-ui, -apple-system, sans-serif" font-size="18">No open positions in this tournament.</text>`}
+      </g>
+    </g>
+
+    <!-- Right Metric Overview Panel -->
+    <g transform="translate(800, 52)">
+      <rect x="0" y="0" width="410" height="580" rx="28" fill="url(#mascotBackdrop)" stroke="url(#cardBorder)" stroke-width="2" filter="url(#drop)"/>
+
+      <g transform="translate(32, 40)">
+        ${rightPaperMetric(0, 0, "CASH BALANCE", formatUsd(snapshot.cashBalanceUsd))}
+        ${rightPaperMetric(0, 110, "POSITIONS VALUE", formatUsd(snapshot.positionsValueUsd))}
+        ${rightPaperMetric(0, 220, "TOTAL REALIZED + UNREALIZED PNL", formatSignedCardUsd(snapshot.totalPnlUsd), accent)}
+        ${rightPaperMetric(0, 330, "TRADING RECORD", `${snapshot.account.wins}W / ${snapshot.account.losses}L`)}
+      </g>
+
+      <g transform="translate(32, 480)">
+        <rect x="0" y="0" width="346" height="60" rx="14" fill="#071810" stroke="#163825" stroke-width="1.2"/>
+        <text x="173" y="36" text-anchor="middle" fill="#00E86B" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="900" letter-spacing="1.5">SIMULATED GAS INCLUDED ⛽</text>
+      </g>
+    </g>
+
+    <!-- Footer -->
+    <text x="68" y="666" fill="#4B6C59" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="800">EXECUTABLE EXIT VALUES AFTER GAS · REFRESHED LIVE</text>
   </svg>`;
-  return sharp(Buffer.from(svg)).png({compressionLevel:9}).toBuffer();
+
+  return sharp(Buffer.from(svg)).png({ compressionLevel: 9 }).toBuffer();
 }
 
-export async function generatePaperLeaderboardCard(competition:PaperCompetition,entries:PaperLeaderboardEntry[]):Promise<Buffer>{
-  const rows=entries.slice(0,7).map((entry,index)=>{
-    const y=232+index*60;const color=entry.pnlUsd>=0?"#00E86B":"#FF6970";const rank=String(index+1).padStart(2,"0");
-    return `<text x="82" y="${y}" fill="${index<3?"#00E86B":"#6F8679"}" font-family="Arial,sans-serif" font-size="19" font-weight="900">${rank}</text><text x="142" y="${y}" fill="#F3F7F4" font-family="Arial,sans-serif" font-size="21" font-weight="900">${xml(entry.username.slice(0,25))}</text><text x="630" y="${y}" text-anchor="end" fill="#F3F7F4" font-family="Arial,sans-serif" font-size="20" font-weight="800">${xml(formatUsd(entry.equityUsd))}</text><text x="820" y="${y}" text-anchor="end" fill="${color}" font-family="Arial,sans-serif" font-size="19" font-weight="900">${xml(`${entry.returnPercent>=0?"+":""}${entry.returnPercent.toFixed(2)}%`)}</text><text x="966" y="${y}" text-anchor="end" fill="#81968A" font-family="Arial,sans-serif" font-size="17" font-weight="800">${entry.wins}W/${entry.losses}L</text><text x="1166" y="${y}" text-anchor="end" fill="#81968A" font-family="Arial,sans-serif" font-size="17" font-weight="800">${entry.openPositions}</text>`;
+function rightPaperMetric(x: number, y: number, label: string, value: string, color = "#FFFFFF"): string {
+  return `
+    <g transform="translate(${x}, ${y})">
+      <rect x="0" y="0" width="346" height="88" rx="18" fill="#081A10" stroke="#173E29" stroke-width="1.2"/>
+      <text x="20" y="28" fill="#5F8371" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="900" letter-spacing="1.5">${xml(label)}</text>
+      <text x="20" y="64" fill="${color}" font-family="system-ui, -apple-system, sans-serif" font-size="28" font-weight="900">${xml(value)}</text>
+    </g>
+  `;
+}
+
+export async function generatePaperLeaderboardCard(competition: PaperCompetition, entries: PaperLeaderboardEntry[]): Promise<Buffer> {
+  const rows = entries.slice(0, 7).map((entry, index) => {
+    const y = 196 + index * 58;
+    const color = entry.pnlUsd >= 0 ? "#00E86B" : "#FF6970";
+    const medal = index === 0 ? "#FFD166" : index === 1 ? "#D2E2D9" : index === 2 ? "#CD8C58" : "#6F8679";
+    const rank = String(index + 1).padStart(2, "0");
+
+    return `
+      <g transform="translate(0, ${y})">
+        <rect x="0" y="0" width="1144" height="48" rx="12" fill="${index % 2 === 0 ? "#0A1E13" : "#07170E"}" stroke="#163C26" stroke-width="1"/>
+        <rect x="14" y="9" width="36" height="30" rx="8" fill="${medal}" opacity="${index < 3 ? "0.2" : "0.08"}"/>
+        <text x="32" y="29" text-anchor="middle" fill="${medal}" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="900">${rank}</text>
+        <text x="70" y="30" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="18" font-weight="800">@${xml(entry.username.slice(0, 24))}</text>
+        <text x="580" y="30" text-anchor="end" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="18" font-weight="800">${xml(formatUsd(entry.equityUsd))}</text>
+        <text x="780" y="30" text-anchor="end" fill="${color}" font-family="system-ui, -apple-system, sans-serif" font-size="18" font-weight="900">${xml(`${entry.returnPercent >= 0 ? "+" : ""}${entry.returnPercent.toFixed(2)}%`)}</text>
+        <text x="940" y="30" text-anchor="end" fill="#8FB2A1" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="800">${entry.wins}W / ${entry.losses}L</text>
+        <text x="1110" y="30" text-anchor="end" fill="#8FB2A1" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="800">${entry.openPositions} POS</text>
+      </g>
+    `;
   }).join("");
-  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720"><rect width="1280" height="720" fill="#050C08"/><rect x="26" y="26" width="1228" height="668" rx="34" fill="#0A1710" stroke="#1D3928" stroke-width="2"/><rect x="26" y="26" width="9" height="668" rx="5" fill="#00E86B"/><text x="78" y="78" fill="#00E86B" font-family="Arial,sans-serif" font-size="19" font-weight="900" letter-spacing="4">KAPISCOUT PAPER ARENA</text><text x="78" y="137" fill="#F5F8F5" font-family="Arial,sans-serif" font-size="38" font-weight="900">${xml(competition.name.slice(0,38))}</text><text x="1198" y="132" text-anchor="end" fill="${competition.status==="ACTIVE"?"#00E86B":"#82968A"}" font-family="Arial,sans-serif" font-size="17" font-weight="900">${competition.status==="ACTIVE"?"LIVE STANDINGS":"FINAL STANDINGS"}</text><line x1="78" y1="169" x2="1198" y2="169" stroke="#1B3526"/><text x="82" y="197" fill="#60776A" font-family="Arial,sans-serif" font-size="13" font-weight="900">RANK</text><text x="142" y="197" fill="#60776A" font-family="Arial,sans-serif" font-size="13" font-weight="900">TRADER</text><text x="630" y="197" text-anchor="end" fill="#60776A" font-family="Arial,sans-serif" font-size="13" font-weight="900">BALANCE</text><text x="820" y="197" text-anchor="end" fill="#60776A" font-family="Arial,sans-serif" font-size="13" font-weight="900">RETURN</text><text x="966" y="197" text-anchor="end" fill="#60776A" font-family="Arial,sans-serif" font-size="13" font-weight="900">RECORD</text><text x="1166" y="197" text-anchor="end" fill="#60776A" font-family="Arial,sans-serif" font-size="13" font-weight="900">OPEN</text>${rows||`<text x="78" y="250" fill="#789084" font-family="Arial,sans-serif" font-size="21">Waiting for the first trader to join.</text>`}<text x="78" y="655" fill="#526A5B" font-family="Arial,sans-serif" font-size="14" font-weight="800">RANKED BY EXECUTABLE LIQUIDATION BALANCE · GAS INCLUDED</text><text x="1198" y="655" text-anchor="end" fill="#526A5B" font-family="Arial,sans-serif" font-size="14" font-weight="800">${entries.length} PARTICIPANT${entries.length===1?"":"S"}</text></svg>`;
-  return sharp(Buffer.from(svg)).png({compressionLevel:9}).toBuffer();
-}
 
-function paperMetric(x:number,y:number,label:string,value:string,color="#F5F8F5"):string{return `<text x="${x}" y="${y}" fill="#62796C" font-family="Arial,sans-serif" font-size="13" font-weight="900" letter-spacing="2">${xml(label)}</text><text x="${x}" y="${y+48}" fill="${color}" font-family="Arial,sans-serif" font-size="31" font-weight="900">${xml(value)}</text>`;}
-function formatSignedCardUsd(value:number):string{return `${value>=0?"+":"-"}${formatUsd(Math.abs(value))}`;}
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+    ${COMMON_DEFS}
+    <rect width="1280" height="720" fill="url(#canvasGrad)"/>
+    <rect width="1280" height="720" fill="url(#grid)"/>
+
+    <circle cx="1100" cy="140" r="300" fill="#00E86B" opacity="0.1" filter="url(#softGlow)"/>
+
+    <!-- Main Chassis Border -->
+    <rect x="24" y="24" width="1232" height="672" rx="32" fill="none" stroke="url(#cardBorder)" stroke-width="2"/>
+    <rect x="24" y="24" width="10" height="672" rx="5" fill="url(#emeraldGrad)"/>
+
+    <!-- Header Navigation -->
+    <g transform="translate(68, 50)">
+      <rect x="0" y="0" width="220" height="34" rx="17" fill="#0E2B1B" stroke="#1F5334" stroke-width="1.5"/>
+      <circle cx="18" cy="17" r="5" fill="#00E86B"/>
+      <text x="32" y="23" fill="#00E86B" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="900" letter-spacing="2">KAPISCOUT ARENA</text>
+
+      <rect x="990" y="0" width="154" height="34" rx="17" fill="#0B2B1B" stroke="#00E86B" stroke-width="1.2"/>
+      <text x="1067" y="23" text-anchor="middle" fill="#00E86B" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="900" letter-spacing="1.5">
+        ${competition.status === "ACTIVE" ? "LIVE STANDINGS 🟢" : "FINAL STANDINGS 🏁"}
+      </text>
+
+      <text x="0" y="80" fill="#FFFFFF" font-family="system-ui, -apple-system, sans-serif" font-size="38" font-weight="900">${xml(competition.name.slice(0, 36))}</text>
+
+      <!-- Table Column Headers -->
+      <g transform="translate(0, 110)">
+        <text x="24" y="20" fill="#5F8270" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="900" letter-spacing="2">RANK</text>
+        <text x="70" y="20" fill="#5F8270" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="900" letter-spacing="2">TRADER</text>
+        <text x="580" y="20" text-anchor="end" fill="#5F8270" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="900" letter-spacing="2">LIQUIDATION BALANCE</text>
+        <text x="780" y="20" text-anchor="end" fill="#5F8270" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="900" letter-spacing="2">RETURN</text>
+        <text x="940" y="20" text-anchor="end" fill="#5F8270" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="900" letter-spacing="2">RECORD</text>
+        <text x="1110" y="20" text-anchor="end" fill="#5F8270" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="900" letter-spacing="2">OPEN</text>
+      </g>
+
+      <!-- Standings Rows -->
+      ${rows || `<text x="0" y="180" fill="#789084" font-family="system-ui, -apple-system, sans-serif" font-size="20">Waiting for traders to register and open positions.</text>`}
+    </g>
+
+    <!-- Footer -->
+    <text x="68" y="666" fill="#4B6C59" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="800">RANKINGS USE LIVE ONCHAIN EXECUTABLE QUOTES · GAS INCLUDED</text>
+    <text x="1212" y="666" text-anchor="end" fill="#4B6C59" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="800">${entries.length} PARTICIPANTS</text>
+  </svg>`;
+
+  return sharp(Buffer.from(svg)).png({ compressionLevel: 9 }).toBuffer();
+}
 
 async function tokenArtwork(scan: TokenScan | null): Promise<string> {
   const url = scan?.token.iconUrl;
   if (url && /^https?:\/\//iu.test(url)) {
-    const cached=artworkCache.get(url);if(cached)return cached;
-    const pending=(async()=>{
+    const cached = artworkCache.get(url);
+    if (cached) return cached;
+    const pending = (async () => {
       try {
-        const response = await fetch(url, { signal: AbortSignal.timeout(3_500), headers: { "User-Agent": "KapiScout/0.1" } });
+        const response = await fetch(url, { signal: AbortSignal.timeout(3_500), headers: { "User-Agent": "KapiScout/0.2" } });
         if (response.ok) {
           const raw = Buffer.from(await response.arrayBuffer());
           if (raw.length <= 5_000_000) {
-            const png = await sharp(raw).resize(400,400,{fit:"cover"}).png().toBuffer();
+            const png = await sharp(raw).resize(400, 400, { fit: "cover" }).png().toBuffer();
             return `data:image/png;base64,${png.toString("base64")}`;
           }
         }
-      } catch { /* Fall back to the KapiScout mascot. */ }
+      } catch { /* Fall back to mascot */ }
       return mascot();
     })();
-    artworkCache.set(url,pending);
-    if(artworkCache.size>200)artworkCache.delete(artworkCache.keys().next().value!);
+    artworkCache.set(url, pending);
+    if (artworkCache.size > 200) artworkCache.delete(artworkCache.keys().next().value!);
     return pending;
   }
   return mascot();
-}
-
-function compactNumber(value: number): string {
-  if (!Number.isFinite(value)) return "N/A";
-  for (const [size,suffix] of [[1e12,"T"],[1e9,"B"],[1e6,"M"],[1e3,"K"]] as const) if(Math.abs(value)>=size)return `${Number((value/size).toFixed(2))}${suffix}`;
-  return value.toLocaleString(undefined,{maximumFractionDigits:4});
-}
-
-function alertMetric(x:number,y:number,label:string,value:string):string {
-  return `<rect x="${x}" y="${y}" width="218" height="92" rx="16" fill="#102219" stroke="#1D3C2A"/><text x="${x+18}" y="${y+29}" fill="#667E70" font-family="Arial,sans-serif" font-size="13" font-weight="900" letter-spacing="1.5">${xml(label)}</text><text x="${x+18}" y="${y+67}" fill="#F2F6F3" font-family="Arial,sans-serif" font-size="25" font-weight="900">${xml(value)}</text>`;
-}
-
-function metric(x: number, y: number, label: string, value: string): string {
-  return `
-    <rect x="${x}" y="${y}" width="226" height="108" rx="18" fill="#132A1D" stroke="#244A33"/>
-    <text x="${x + 20}" y="${y + 34}" fill="#6F8E7C" font-family="Arial, sans-serif" font-size="14" font-weight="800" letter-spacing="1.5">${xml(label)}</text>
-    <text x="${x + 20}" y="${y + 79}" fill="#F4F7F4" font-family="Arial, sans-serif" font-size="29" font-weight="900">${xml(value)}</text>`;
 }

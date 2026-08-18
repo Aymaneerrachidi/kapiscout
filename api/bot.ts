@@ -1,3 +1,4 @@
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { webhookCallback } from "grammy";
 import { BlockscoutClient } from "../src/blockscout.js";
 import { createRobinhoodClient } from "../src/chain.js";
@@ -12,19 +13,24 @@ import { createTelegramBot } from "../src/telegram.js";
 /**
  * Telegram webhook endpoint.
  *
- * Vercel functions are request-scoped, so the bot is built once per warm
- * instance and reused. Long polling and the background schedulers cannot run
- * here — see api/cron.ts for the periodic work.
+ * Vercel's Node runtime calls this with (req, res) and waits for the response
+ * to be ended, so this uses grammY's "https" adapter rather than a
+ * fetch-style handler. The bot is built once per warm instance and reused.
+ *
+ * Long polling and the background schedulers cannot run here — a Vercel
+ * function only lives for the length of one request.
  */
 
-type FetchHandler = (request: Request) => Promise<Response>;
+type NodeHandler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
-let handlerPromise: Promise<FetchHandler> | null = null;
+let handlerPromise: Promise<NodeHandler> | null = null;
 
-async function build(): Promise<FetchHandler> {
+async function build(): Promise<NodeHandler> {
   const config = loadConfig();
   const store = new Store(config.dbPath);
-  await store.init();
+  // Schema is applied out of band by `npm run migrate`; replaying it here
+  // would cost ~30 round trips to Turso on every cold start.
+  await store.init({ migrate: false });
   for (const kol of config.kolWallets) await store.upsertKol(kol.label, kol.address);
 
   const client = createRobinhoodClient(config);
@@ -37,30 +43,36 @@ async function build(): Promise<FetchHandler> {
 
   // grammY needs the bot initialised before it can handle a raw update.
   await bot.init();
-  return webhookCallback(bot, "std/http") as unknown as FetchHandler;
+  return webhookCallback(bot, "https") as unknown as NodeHandler;
 }
 
-function handler(): Promise<FetchHandler> {
-  if (!handlerPromise) handlerPromise = build();
-  return handlerPromise;
+function send(res: ServerResponse, status: number, body: string): void {
+  res.statusCode = status;
+  res.setHeader("content-type", "text/plain; charset=utf-8");
+  res.end(body);
 }
 
-export default async function (request: Request): Promise<Response> {
-  if (request.method !== "POST") {
-    return new Response("Kapiscout webhook is up. POST Telegram updates here.", { status: 200 });
+export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (req.method !== "POST") {
+    send(res, 200, "Kapiscout webhook is up. POST Telegram updates here.");
+    return;
   }
 
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim();
-  if (secret && request.headers.get("x-telegram-bot-api-secret-token") !== secret) {
-    return new Response("Forbidden", { status: 403 });
+  if (secret && req.headers["x-telegram-bot-api-secret-token"] !== secret) {
+    send(res, 403, "Forbidden");
+    return;
   }
 
   try {
-    const callback = await handler();
-    return await callback(request);
+    if (!handlerPromise) handlerPromise = build();
+    const callback = await handlerPromise;
+    await callback(req, res);
   } catch (error) {
     console.error("Webhook failed", error);
-    // 200 keeps Telegram from hammering a retry loop on a poisoned update.
-    return new Response("error", { status: 200 });
+    // Rebuild on the next request rather than caching a broken bot.
+    handlerPromise = null;
+    // 200 stops Telegram retrying a poisoned update forever.
+    if (!res.writableEnded) send(res, 200, "error");
   }
 }
