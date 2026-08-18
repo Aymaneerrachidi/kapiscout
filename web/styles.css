@@ -645,3 +645,162 @@ a,button{color:inherit;font:inherit}a{text-decoration:none}button{border:0}img{d
     margin: 24px -2vw 0 0;
   }
 }
+
+/* Page three uses both sides of the open book as one continuous story. */
+.story-section.book-spread {
+  display: block;
+}
+
+.story-section.book-spread .story-sticky {
+  display: grid;
+  min-height: 650px;
+  grid-template-columns: minmax(0,1fr) minmax(0,1fr);
+  grid-template-rows: auto 1fr;
+  gap: 36px clamp(56px,8vw,120px);
+  padding: clamp(72px,7vw,108px);
+  border-bottom: 1px solid var(--line-paper);
+}
+
+.story-section.book-spread .story-sticky .eyebrow {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.story-section.book-spread .story-sticky h2 {
+  align-self: end;
+  grid-column: 1;
+  grid-row: 2;
+  margin: 0;
+  color: var(--ink);
+}
+
+.story-section.book-spread .inline-memory {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-height: 430px;
+  grid-column: 2;
+  grid-row: 1 / 3;
+  grid-template-rows: minmax(0,1fr) auto;
+  gap: 18px;
+  margin: 0;
+}
+
+.story-section.book-spread .inline-memory img {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 14px;
+  object-fit: contain;
+  object-position: center;
+  background: #08a84f;
+}
+
+.story-section.book-spread .inline-memory figcaption {
+  max-width: 34ch;
+  color: rgba(16,32,22,.58);
+  font-size: .82rem;
+  line-height: 1.5;
+}
+
+.story-section.book-spread .story-flow {
+  display: grid;
+  grid-template-columns: repeat(2,minmax(0,1fr));
+  gap: 0;
+  padding: 0 0 clamp(60px,7vw,96px);
+}
+
+.story-section.book-spread .story-beat {
+  display: flex;
+  min-width: 0;
+  min-height: 450px;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: clamp(42px,5vw,72px);
+  border-right: 1px solid var(--line-paper);
+  border-bottom: 1px solid var(--line-paper);
+}
+
+.story-section.book-spread .story-beat:nth-child(even) {
+  border-right: 0;
+}
+
+.story-section.book-spread .story-beat p {
+  max-width: 24ch;
+  margin-top: 20px;
+  color: var(--ink);
+  font-size: clamp(1.55rem,2.15vw,2.65rem);
+  line-height: 1.08;
+}
+
+.story-section.book-spread .story-beat-image {
+  justify-content: space-between;
+  background: rgba(216,230,206,.42);
+}
+
+.story-section.book-spread .story-beat-image img {
+  width: 100%;
+  height: auto;
+  max-height: 390px;
+  margin: 0 0 34px;
+  object-fit: contain;
+  box-shadow: 0 18px 42px rgba(44,31,16,.14);
+}
+
+.story-section.book-spread .story-beat-green {
+  color: var(--ink);
+  background: var(--green);
+}
+
+.story-section.book-spread .story-beat-green p {
+  color: var(--ink);
+}
+
+@media (max-width: 900px) {
+  .story-section.book-spread .story-sticky {
+    min-height: 0;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+    gap: 28px;
+    padding: 76px 32px 42px;
+  }
+
+  .story-section.book-spread .story-sticky .eyebrow,
+  .story-section.book-spread .story-sticky h2,
+  .story-section.book-spread .inline-memory {
+    grid-column: 1;
+  }
+
+  .story-section.book-spread .story-sticky .eyebrow { grid-row: 1; }
+  .story-section.book-spread .story-sticky h2 { grid-row: 2; }
+  .story-section.book-spread .inline-memory {
+    min-height: 0;
+    grid-row: 3;
+  }
+
+  .story-section.book-spread .inline-memory img {
+    height: auto;
+    max-height: none;
+  }
+
+  .story-section.book-spread .story-flow {
+    grid-template-columns: 1fr;
+    gap: 0;
+    padding: 0 0 62px;
+  }
+
+  .story-section.book-spread .story-beat {
+    min-height: 0;
+    padding: 54px 32px;
+    border-right: 0;
+  }
+
+  .story-section.book-spread .story-beat p {
+    max-width: none;
+    font-size: clamp(1.65rem,7.5vw,2.5rem);
+  }
+
+  .story-section.book-spread .story-beat-image img {
+    max-height: none;
+  }
+}
