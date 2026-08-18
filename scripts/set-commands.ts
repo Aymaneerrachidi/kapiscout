@@ -21,6 +21,12 @@ const commands = [
   { command: "timeline", description: "Token timeline" },
   { command: "devhistory", description: "Deployer reputation" },
   { command: "pnl", description: "PNL for a called token" },
+  { command: "portfolio", description: "Wallet portfolio" },
+  { command: "addwallet", description: "Track a wallet - address + name" },
+  { command: "wallets", description: "List tracked wallets" },
+  { command: "removewallet", description: "Stop tracking a wallet" },
+  { command: "walletscore", description: "Smart Wallet Score" },
+  { command: "alerts", description: "Custom signal rules" },
   { command: "settings", description: "Show group settings" },
   { command: "help", description: "How Kapiscout works" },
 ];

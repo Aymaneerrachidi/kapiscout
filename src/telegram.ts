@@ -500,7 +500,7 @@ async function showDashboard(ctx: Context): Promise<void> {
 
 function mainMenuKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("🔎 Scan & Research","ui:research").row()
+    .text("🔎 Scan & Research","ui:research").text("👀 Wallets","ui:wallets_menu").row()
     .text("⚙️ Settings","ui:settings").text("❔ Guide","ui:guide");
 }
 
@@ -562,12 +562,12 @@ async function showUiPanel(ctx:Context,caption:string,keyboard:InlineKeyboard):P
 
 function settingsPanel(settings:ChatSettings):string{
   const s=(value:boolean)=>value?"🟢":"⚪";
-  return ["<b>⚙️ QUICK SETTINGS</b>","└ Tap any option to toggle it.","",`${s(settings.showChart)} Charts`].join("\n");
+  return ["<b>⚙️ QUICK SETTINGS</b>","└ Tap any option to toggle it.","",`${s(settings.showChart)} Charts     ${s(settings.kolAlerts)} Wallet alerts`,`${s(settings.milestoneAlerts)} Milestones  ${s(settings.devAlerts)} Dev alerts`,`${s(settings.whaleAlerts)} Whales`].join("\n");
 }
 
 function settingsKeyboard(settings:ChatSettings):InlineKeyboard{
   const s=(value:boolean)=>value?"🟢":"⚪";
-  return new InlineKeyboard().text(`${s(settings.showChart)} Charts`,`ui:toggle:show_chart`).row().text("‹ Home","ui:home");
+  return new InlineKeyboard().text(`${s(settings.showChart)} Charts`,`ui:toggle:show_chart`).text(`${s(settings.kolAlerts)} Wallets`,`ui:toggle:kol_alerts`).row().text(`${s(settings.milestoneAlerts)} Milestones`,`ui:toggle:milestone_alerts`).text(`${s(settings.devAlerts)} Dev`,`ui:toggle:dev_alerts`).row().text(`${s(settings.whaleAlerts)} Whales`,`ui:toggle:whale_alerts`).text("‹ Home","ui:home");
 }
 
 async function requestUiInput(ctx:Context,action:UiPromptAction,pending:Map<string,{action:UiPromptAction;promptMessageId:number;expiresAt:number}>):Promise<void>{
@@ -1194,6 +1194,11 @@ function helpText(): string {
     "<b>🔎 Research</b>",
     "├ /chart · /holders · /holderchanges · /pnl",
     "└ /intel · /quote · /devhistory · /timeline", "",
+    "<b>🔔 Wallets</b>",
+    "├ /addwallet <code>0x… Name</code>",
+    "├ /namewallet <code>0x… New Name</code>",
+    "├ /wallets · /removewallet",
+    "└ /portfolio · /walletscore · /alert", "",
     "<b>⚙️ Setup</b>",
     "└ /settings · /showchart · /chartmode · /timeframe · /minmc", "",
     "<i>Prefix a contract with . to ignore it.</i>",
