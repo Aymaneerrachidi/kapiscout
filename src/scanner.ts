@@ -26,7 +26,7 @@ export class TokenScanner {
   private readonly poolKeyCache = new Map<string, Promise<V4PoolDetails>>();
 
   constructor(
-    private readonly publicClient: PublicClient,
+    readonly publicClient: PublicClient,
     private readonly blockscout: BlockscoutClient,
     readonly market: MarketClient,
     private readonly config: AppConfig,

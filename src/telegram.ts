@@ -2,13 +2,14 @@ import { Bot, InlineKeyboard, InputFile, type Context } from "grammy";
 import type { Address } from "viem";
 import type { AppConfig } from "./config.js";
 import { ChartClient, generateChartCard, type ChartSeries } from "./chart.js";
+import { onchainCandles } from "./onchain-chart.js";
 import { generateDashboardCard, generateGroupSummaryCard, generatePaperLeaderboardCard, generatePaperPortfolioCard, generatePnlCard, generateTokenCard } from "./card.js";
 import type { Store } from "./db.js";
 import { buildRealityReport, estimateRealMultiple, summarizeLiquidityHistory } from "./intelligence.js";
 import { buildDailyDigest } from "./features.js";
 import type { TokenScanner } from "./scanner.js";
 import type { PaperCompetitionService } from "./paper.js";
-import type { CallRecord, ChartMetric, ChartTimeframe, ChatSettings, TokenScan } from "./types.js";
+import type { CallRecord, Candle, ChartMetric, ChartTimeframe, ChatSettings, TokenScan } from "./types.js";
 import {
   calculateMultiple,
   calculateReturn,
@@ -645,7 +646,7 @@ async function scanAndReply(ctx: Context, address: Address, store: Store, scanne
   });
   const call = recorded.call;
   const caption = renderScanCaption(scan, call, recorded.created, false, compact || settings.compact, detailed || settings.detailed);
-  const image = await scanImage(scan, call, settings.chartMetric, settings.chartTimeframe, settings.showChart, charts, chartResult);
+  const image = await scanImage(scan, call, settings.chartMetric, settings.chartTimeframe, settings.showChart, charts, scanner, chartResult);
   await ctx.replyWithPhoto(new InputFile(image, `kapiscout-${scan.token.symbol}.png`), {
     caption, parse_mode: "HTML", reply_markup: settings.buttonsEnabled ? tokenKeyboard(scan, call, settings.chartMetric, settings.chartTimeframe, config) : undefined,
   });
@@ -665,18 +666,55 @@ async function refreshMessage(ctx: Context, address: Address, metric: ChartMetri
     dexPaid: scan.market.dexPaid, incrementScan: true,
   }) : null;
   const settings = await store.getChatSettings(String(ctx.chat.id));
-  const image = await scanImage(scan, updated, metric, timeframe, true, charts, chartResult);
+  const image = await scanImage(scan, updated, metric, timeframe, true, charts, scanner, chartResult);
   const caption = renderScanCaption(scan, updated, false, true, settings.compact, settings.detailed);
   await ctx.editMessageMedia({
     type: "photo", media: new InputFile(image, `kapiscout-${scan.token.symbol}.png`), caption, parse_mode: "HTML",
   }, { reply_markup: settings.buttonsEnabled ? tokenKeyboard(scan, updated, metric, timeframe, config) : undefined });
 }
 
-async function scanImage(scan: TokenScan, call: CallRecord | null, metric: ChartMetric, timeframe: ChartTimeframe, showChart: boolean, charts: ChartClient, prefetched: ChartSeries | null = null): Promise<Buffer> {
+interface ResolvedSeries {
+  candles: Candle[];
+  timeframe: Exclude<ChartTimeframe, "auto">;
+}
+
+/**
+ * Chart data with an on-chain fallback.
+ *
+ * GeckoTerminal has no OHLCV for freshly launched pairs or DEXes it has not
+ * integrated (flapsh, for one), which is most of what gets scanned early. When
+ * the indexer comes back empty, rebuild the series from pool events instead of
+ * dropping the chart.
+ */
+async function resolveChartSeries(
+  scan: TokenScan,
+  timeframe: ChartTimeframe,
+  charts: ChartClient,
+  scanner: TokenScanner,
+  prefetched: ChartSeries | null = null,
+): Promise<ResolvedSeries | null> {
+  if (prefetched) return prefetched;
+  const pair = scan.market.pairAddress;
+  if (!pair) return null;
+
+  const indexed = await charts.candles(pair, timeframe, scan.market.pairCreatedAt).catch(() => null);
+  if (indexed) return indexed;
+
+  return await onchainCandles({
+    client: scanner.publicClient,
+    pairAddress: pair as Address,
+    tokenAddress: scan.token.address,
+    timeframe,
+    currentPriceUsd: scan.market.priceUsd,
+    pairCreatedAt: scan.market.pairCreatedAt,
+  }).catch(() => null);
+}
+
+async function scanImage(scan: TokenScan, call: CallRecord | null, metric: ChartMetric, timeframe: ChartTimeframe, showChart: boolean, charts: ChartClient, scanner: TokenScanner, prefetched: ChartSeries | null = null): Promise<Buffer> {
   if (showChart && (prefetched || scan.market.pairAddress)) {
     try {
-      const result = prefetched ?? await charts.candles(scan.market.pairAddress!, timeframe, scan.market.pairCreatedAt);
-      return await generateChartCard(scan, result.candles, result.timeframe, metric, call);
+      const result = await resolveChartSeries(scan, timeframe, charts, scanner, prefetched);
+      if (result) return await generateChartCard(scan, result.candles, result.timeframe, metric, call);
     } catch (error) {
       console.warn("Chart rendering failed; using scan card", error);
     }
@@ -688,7 +726,7 @@ async function sendChartOnly(ctx: Context, address: Address, timeframe: ChartTim
   const chartLoad = within(charts.candlesForToken(address, timeframe), 6_000, null);
   const scan = await withStatus(ctx, () => scanner.scan(address));
   if (!scan) return;
-  const result = await chartLoad ?? (scan.market.pairAddress ? await charts.candles(scan.market.pairAddress, timeframe, scan.market.pairCreatedAt).catch(() => null) : null);
+  const result = await resolveChartSeries(scan, timeframe, charts, scanner, await chartLoad);
   if (!result) return void await replyPanel(ctx, "📭", "Chart unavailable", ["No OHLCV history is indexed for this token yet."], "Try again after the pool records more trades.");
   const call = ctx.chat ? await store.getCall(String(ctx.chat.id), address) : null;
   const image = await generateChartCard(scan, result.candles, result.timeframe, metric, call);
