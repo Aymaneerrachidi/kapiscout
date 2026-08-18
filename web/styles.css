@@ -253,6 +253,75 @@ a,button{color:inherit;font:inherit}a{text-decoration:none}button{border:0}img{d
   line-height: 1.65;
 }
 
+.secret-panel {
+  display: grid;
+  width: min(1360px, 100%);
+  min-height: 520px;
+  margin: 0 auto;
+  overflow: hidden;
+  grid-template-columns: 1.15fr .85fr;
+  border: 1px solid var(--line-dark);
+  background: #06170e;
+}
+
+.secret-panel-visual {
+  position: relative;
+  min-height: 520px;
+  overflow: hidden;
+}
+
+.secret-panel-visual::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(90deg, transparent 48%, rgba(6,23,14,.92));
+}
+
+.secret-panel-visual img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: saturate(.72) brightness(.68) contrast(1.08);
+  transition: transform .8s cubic-bezier(.2,.75,.25,1), filter .8s ease;
+}
+
+.secret-panel:hover .secret-panel-visual img {
+  transform: scale(1.025);
+  filter: saturate(.9) brightness(.76) contrast(1.04);
+}
+
+.secret-panel-copy {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(42px,6vw,88px);
+}
+
+.secret-panel-copy span {
+  color: var(--green);
+  font-size: .7rem;
+  font-weight: 900;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+}
+
+.secret-panel-copy h3 {
+  max-width: 8ch;
+  margin: 28px 0 24px;
+  font-size: clamp(3rem,5vw,6rem);
+  line-height: .88;
+  letter-spacing: -.06em;
+}
+
+.secret-panel-copy p {
+  max-width: 36ch;
+  margin: 0;
+  color: rgba(244,238,220,.62);
+  line-height: 1.65;
+}
+
 @media (max-width: 900px) {
   .story-section.book-spread .story-flow { gap: 92px; }
   .culture-section.book-spread { grid-template-columns: 1fr; }
@@ -260,4 +329,8 @@ a,button{color:inherit;font:inherit}a{text-decoration:none}button{border:0}img{d
   .culture-copy { padding: 72px 32px 86px; }
   .culture-copy h2 { font-size: clamp(3.2rem,14vw,5.4rem); }
   .launch-note { grid-template-columns: 1fr; gap: 16px; margin: -20px auto 48px; }
+  .secret-panel { grid-template-columns: 1fr; }
+  .secret-panel-visual { min-height: 330px; }
+  .secret-panel-visual::after { background: linear-gradient(180deg, transparent 48%, #06170e); }
+  .secret-panel-copy { padding: 38px 30px 54px; }
 }

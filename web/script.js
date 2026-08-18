@@ -20,15 +20,6 @@
       .to("#hero-book", { rotateY: -9, xPercent: 0, duration: 0.5, ease: "power3.out" });
   });
 
-  document.querySelectorAll(".feature-panel").forEach(function (panel) {
-    function activate() {
-      document.querySelectorAll(".feature-panel").forEach(function (item) { item.classList.remove("active"); });
-      panel.classList.add("active");
-    }
-    panel.addEventListener("mouseenter", activate);
-    panel.addEventListener("focus", activate);
-  });
-
   const creed = document.querySelector("[data-word-reveal]");
   if (creed) {
     creed.innerHTML = creed.textContent.trim().split(/\s+/).map(function (word) {
