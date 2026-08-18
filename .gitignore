@@ -12,3 +12,5 @@ __MACOSX/
 .env*
 output/
 .playwright-mcp/
+probe-*.png
+vercel-*.png

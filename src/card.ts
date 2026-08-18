@@ -27,18 +27,59 @@ function statusColor(scan: TokenScan): string {
 
 export function generateDashboardCard(): Promise<Buffer> {
   dashboardCard ??= (async () => {
-    const mascotUrl = await mascot();
+    const logo = await mascot();
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
-      <defs><filter id="soft"><feGaussianBlur stdDeviation="34"/></filter><clipPath id="heroMascot"><rect x="820" y="74" width="382" height="510" rx="36"/></clipPath></defs>
-      <rect width="1280" height="720" fill="#050D08"/><circle cx="1110" cy="80" r="330" fill="#00E86B" opacity=".12" filter="url(#soft)"/>
-      <rect x="28" y="28" width="1224" height="664" rx="38" fill="#0A1810" stroke="#1C3B29" stroke-width="2"/><rect x="28" y="28" width="10" height="664" rx="5" fill="#00E86B"/>
-      <text x="78" y="90" fill="#00E86B" font-family="Arial,sans-serif" font-size="22" font-weight="900" letter-spacing="5">KAPISCOUT</text><text x="276" y="90" fill="#688274" font-family="Arial,sans-serif" font-size="16" font-weight="800" letter-spacing="2">ROBINHOOD CHAIN</text>
-      <text x="78" y="202" fill="#F5F8F5" font-family="Arial,sans-serif" font-size="66" font-weight="900">See the play.</text><text x="78" y="278" fill="#F5F8F5" font-family="Arial,sans-serif" font-size="66" font-weight="900">Know the exit.</text>
-      <text x="78" y="338" fill="#8BA095" font-family="Arial,sans-serif" font-size="24" font-weight="600">One clean interface for tokens, wallets and calls.</text>
-      ${dashboardPill(78, 402, "SCAN", "Live market + chart")}${dashboardPill(314, 402, "TRACK", "Wallet intelligence")}${dashboardPill(550, 402, "PROVE", "First-call PNL")}
-      <rect x="78" y="566" width="644" height="66" rx="20" fill="#00E86B"/><circle cx="116" cy="599" r="7" fill="#06210D"/><text x="140" y="608" fill="#04200C" font-family="Arial,sans-serif" font-size="22" font-weight="900">LIVE · FAST · READ-ONLY</text>
-      <rect x="802" y="56" width="418" height="550" rx="42" fill="#00C805"/><image href="${mascotUrl}" x="820" y="74" width="382" height="510" preserveAspectRatio="xMidYMid slice" clip-path="url(#heroMascot)"/>
-      <text x="1204" y="656" text-anchor="end" fill="#425A4A" font-family="Arial,sans-serif" font-size="14" font-weight="800">BUILT FOR THE TRENCHES</text>
+      <defs>
+        <filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="60"/></filter>
+        <filter id="ringGlow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="18"/></filter>
+        <radialGradient id="medallion" cx="50%" cy="38%" r="72%">
+          <stop offset="0%" stop-color="#12351F"/>
+          <stop offset="100%" stop-color="#081A0F"/>
+        </radialGradient>
+        <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#00E86B"/>
+          <stop offset="55%" stop-color="#00C805"/>
+          <stop offset="100%" stop-color="#0C6B3A"/>
+        </linearGradient>
+        <clipPath id="logoClip"><circle cx="1012" cy="322" r="188"/></clipPath>
+        <linearGradient id="cta" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="#00E86B"/>
+          <stop offset="100%" stop-color="#38F58C"/>
+        </linearGradient>
+      </defs>
+
+      <rect width="1280" height="720" fill="#050D08"/>
+      <circle cx="1040" cy="250" r="300" fill="#00E86B" opacity=".16" filter="url(#soft)"/>
+      <circle cx="180" cy="660" r="220" fill="#00C805" opacity=".07" filter="url(#soft)"/>
+
+      <rect x="28" y="28" width="1224" height="664" rx="38" fill="#0A1810" stroke="#1C3B29" stroke-width="2"/>
+      <rect x="28" y="28" width="10" height="664" rx="5" fill="url(#ring)"/>
+
+      <text x="78" y="92" fill="#00E86B" font-family="Arial,sans-serif" font-size="21" font-weight="900" letter-spacing="5">KAPISCOUT</text>
+      <rect x="272" y="70" width="212" height="30" rx="15" fill="#10241A" stroke="#214632"/>
+      <text x="378" y="91" text-anchor="middle" fill="#7E9A8A" font-family="Arial,sans-serif" font-size="14" font-weight="800" letter-spacing="2">ROBINHOOD CHAIN</text>
+
+      <text x="78" y="212" fill="#F5F8F5" font-family="Arial,sans-serif" font-size="62" font-weight="900">See the play.</text>
+      <text x="78" y="286" fill="#F5F8F5" font-family="Arial,sans-serif" font-size="62" font-weight="900">Know the <tspan fill="#00E86B">exit.</tspan></text>
+      <text x="78" y="342" fill="#8BA095" font-family="Arial,sans-serif" font-size="22" font-weight="600">One clean interface for tokens, wallets and calls.</text>
+
+      ${dashboardPill(78, 400, "SCAN", "Live market + chart")}${dashboardPill(314, 400, "TRACK", "Wallet intelligence")}${dashboardPill(550, 400, "PROVE", "First-call PNL")}
+
+      <rect x="78" y="572" width="600" height="64" rx="32" fill="url(#cta)"/>
+      <circle cx="116" cy="604" r="7" fill="#04200C"/>
+      <text x="140" y="613" fill="#04200C" font-family="Arial,sans-serif" font-size="21" font-weight="900" letter-spacing="1">LIVE &#183; FAST &#183; READ-ONLY</text>
+
+      <circle cx="1012" cy="322" r="200" fill="#00E86B" opacity=".16" filter="url(#ringGlow)"/>
+      <circle cx="1012" cy="322" r="188" fill="url(#medallion)"/>
+      <g clip-path="url(#logoClip)">
+        <image href="${logo}" x="800" y="132" width="424" height="424" preserveAspectRatio="xMidYMid slice"/>
+      </g>
+      <circle cx="1012" cy="322" r="188" fill="none" stroke="url(#ring)" stroke-width="7"/>
+      <circle cx="1012" cy="322" r="197" fill="none" stroke="#123D24" stroke-width="2"/>
+      <text x="1012" y="576" text-anchor="middle" fill="#00E86B" font-family="Arial,sans-serif" font-size="16" font-weight="900" letter-spacing="4">THE SCOUT</text>
+      <text x="1012" y="606" text-anchor="middle" fill="#5C7767" font-family="Arial,sans-serif" font-size="13" font-weight="700" letter-spacing="2">OF ROBINHOOD CHAIN</text>
+
+      <text x="1204" y="664" text-anchor="end" fill="#31463A" font-family="Arial,sans-serif" font-size="13" font-weight="800" letter-spacing="1">BUILT FOR THE TRENCHES</text>
     </svg>`;
     return sharp(Buffer.from(svg)).png({ compressionLevel: 9 }).toBuffer();
   })();
