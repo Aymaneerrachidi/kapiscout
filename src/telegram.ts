@@ -501,9 +501,6 @@ async function showDashboard(ctx: Context): Promise<void> {
 function mainMenuKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
     .text("🔎 Scan & Research","ui:research").row()
-    .text("🎯 Calls","ui:calls_menu").text("👀 Wallets","ui:wallets_menu").row()
-    .text("🧾 Paper Trading","ui:paper_menu").text("⚡ Signals","ui:signals_menu").row()
-    .text("🌉 Bridge Radar","ui:bridge_menu").text("☀️ Daily Edge","ui:digest_menu").row()
     .text("⚙️ Settings","ui:settings").text("❔ Guide","ui:guide");
 }
 
@@ -565,12 +562,12 @@ async function showUiPanel(ctx:Context,caption:string,keyboard:InlineKeyboard):P
 
 function settingsPanel(settings:ChatSettings):string{
   const s=(value:boolean)=>value?"🟢":"⚪";
-  return ["<b>⚙️ QUICK SETTINGS</b>","└ Tap any option to toggle it.","",`${s(settings.showChart)} Charts     ${s(settings.kolAlerts)} Wallet alerts`,`${s(settings.milestoneAlerts)} Milestones  ${s(settings.devAlerts)} Dev alerts`,`${s(settings.whaleAlerts)} Whales      ${s(settings.digestEnabled)} Digest`,`${s(settings.bridgeAlerts)} Bridge radar`].join("\n");
+  return ["<b>⚙️ QUICK SETTINGS</b>","└ Tap any option to toggle it.","",`${s(settings.showChart)} Charts`].join("\n");
 }
 
 function settingsKeyboard(settings:ChatSettings):InlineKeyboard{
   const s=(value:boolean)=>value?"🟢":"⚪";
-  return new InlineKeyboard().text(`${s(settings.showChart)} Charts`,`ui:toggle:show_chart`).text(`${s(settings.kolAlerts)} Wallets`,`ui:toggle:kol_alerts`).row().text(`${s(settings.milestoneAlerts)} Milestones`,`ui:toggle:milestone_alerts`).text(`${s(settings.devAlerts)} Dev`,`ui:toggle:dev_alerts`).row().text(`${s(settings.whaleAlerts)} Whales`,`ui:toggle:whale_alerts`).text(`${s(settings.digestEnabled)} Digest`,`ui:toggle:digest`).row().text(`${s(settings.bridgeAlerts)} Bridge`,`ui:toggle:bridge`).text("‹ Home","ui:home");
+  return new InlineKeyboard().text(`${s(settings.showChart)} Charts`,`ui:toggle:show_chart`).row().text("‹ Home","ui:home");
 }
 
 async function requestUiInput(ctx:Context,action:UiPromptAction,pending:Map<string,{action:UiPromptAction;promptMessageId:number;expiresAt:number}>):Promise<void>{
@@ -1003,8 +1000,7 @@ function tokenKeyboard(scan: TokenScan, call: CallRecord | null, metric: ChartMe
     .text(`⏱ ${timeframe.toUpperCase()}`, `t:${address}:${metricCode}:${timeframe}`).row()
     .text("▣ Chart", `c:${address}:${metricCode}:${timeframe}`).row()
     .text("💱 Quote", `q:${address}`)
-    .text("🕘 Timeline", `tl:${address}`)
-    .text("🧾 Paper Buy", `pb:${address}`).row();
+    .text("🕘 Timeline", `tl:${address}`).row();
   if (scan.market.pairUrl) keyboard.url("DS", scan.market.pairUrl);
   if (scan.market.pairAddress) keyboard.url("GT", `https://www.geckoterminal.com/robinhood/pools/${scan.market.pairAddress}`);
   keyboard.url("EXP", `${config.blockscoutBrowserUrl}/token/${address}`);
@@ -1198,17 +1194,6 @@ function helpText(): string {
     "<b>🔎 Research</b>",
     "├ /chart · /holders · /holderchanges · /pnl",
     "└ /intel · /quote · /devhistory · /timeline", "",
-    "<b>🏆 Calls</b>",
-    "├ /calls · /active · /lb · /reallb",
-    "└ /callers · /stats · /summary", "",
-    "<b>🔔 Wallets</b>",
-    "├ /addwallet <code>0x… Name</code>",
-    "├ /namewallet <code>0x… New Name</code>",
-    "├ /wallets · /removewallet",
-    "└ /portfolio · /walletscore · /alert", "",
-    "<b>🧾 Simulator & Radar</b>",
-    "├ /paperbuy · /papersell · /paper",
-    "└ /digest · /bridgeflow · /bridgealerts", "",
     "<b>⚙️ Setup</b>",
     "└ /settings · /showchart · /chartmode · /timeframe · /minmc", "",
     "<i>Prefix a contract with . to ignore it.</i>",

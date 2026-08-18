@@ -87,9 +87,6 @@ await bot.start({
     await bot.api.setMyCommands([
       { command: "menu", description: "Open the KapiScout interface" },
       { command: "scan", description: "Quick token scan" },
-      { command: "portfolio", description: "Open wallet portfolio" },
-      { command: "calls", description: "Open recent calls" },
-      { command: "paper", description: "Open the Paper Arena" },
       { command: "settings", description: "Show group settings" },
       { command: "help", description: "How KapiScout works" },
     ]);
