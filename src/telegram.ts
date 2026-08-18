@@ -41,7 +41,7 @@ export async function createTelegramBot(config: AppConfig, store: Store, scanner
   });
 
   bot.command(["start", "menu"], async (ctx) => void await showDashboard(ctx));
-  bot.command("help", async (ctx) => void await ctx.reply(helpText(), { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("Open KapiScout", "ui:home") }));
+  bot.command("help", async (ctx) => void await ctx.reply(helpText(), { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("Open Kapiscout", "ui:home") }));
 
   bot.command("scan", async (ctx) => {
     const address = extractAddresses(commandArgument(ctx.message?.text))[0];
@@ -135,7 +135,7 @@ export async function createTelegramBot(config: AppConfig, store: Store, scanner
     if (!ctx.chat) return;
     const chatId = String(ctx.chat.id);
     const calls = await store.listCalls(chatId, 10_000);
-    const title = "title" in ctx.chat ? ctx.chat.title ?? "KapiScout group" : "KapiScout calls";
+    const title = "title" in ctx.chat ? ctx.chat.title ?? "Kapiscout group" : "Kapiscout calls";
     const image = await generateGroupSummaryCard(title, await store.callerStats(chatId), calls);
     await ctx.replyWithPhoto(new InputFile(image, "kapiscout-group-report.png"), { caption: `<b>${escapeHtml(title)} · performance report</b>`, parse_mode: "HTML" });
   });
@@ -150,7 +150,7 @@ export async function createTelegramBot(config: AppConfig, store: Store, scanner
     if (!ctx.chat) return;
     const wallet = extractAddresses(commandArgument(ctx.message?.text))[0];
     const positions = await store.walletPortfolio(String(ctx.chat.id), wallet);
-    if (!positions.length) return void await replyPanel(ctx, "📭", "Portfolio is empty", ["KapiScout builds this portfolio from wallet movements it observes after tracking starts."], "Add a wallet with /addwallet, then let the live monitor collect trades.");
+    if (!positions.length) return void await replyPanel(ctx, "📭", "Portfolio is empty", ["Kapiscout builds this portfolio from wallet movements it observes after tracking starts."], "Add a wallet with /addwallet, then let the live monitor collect trades.");
     const priced = await Promise.all(positions.slice(0, 10).map(async (position) => {
       const scan = await scanner.scan(position.tokenAddress).catch(() => null);
       const price = scan?.market.priceUsd ?? position.lastPriceUsd;
@@ -164,7 +164,7 @@ export async function createTelegramBot(config: AppConfig, store: Store, scanner
   bot.command(["walletscore","wscore"], async (ctx) => {
     if (!ctx.chat) return;
     const wallet=extractAddresses(commandArgument(ctx.message?.text))[0];
-    if(!wallet) return void await replyPanel(ctx,"🧠","Smart Wallet Score",["<code>/walletscore 0xWallet</code>"],"Scores only activity observed by KapiScout.");
+    if(!wallet) return void await replyPanel(ctx,"🧠","Smart Wallet Score",["<code>/walletscore 0xWallet</code>"],"Scores only activity observed by Kapiscout.");
     const score=await store.smartWalletScore(String(ctx.chat.id),wallet);
     if(!score) return void await replyPanel(ctx,"📭","Not enough wallet history",["No observed buys or sells exist for this wallet yet."]);
     await ctx.reply([`<b>🧠 ${escapeHtml(score.label)} · SMART SCORE</b>`,`└ <code>${compactAddress(wallet)}</code>`,"",`Score  <b>${score.score}/100 · ${score.grade}</b>`,`├ Trades   ${score.trades}`,`├ Win rate ${score.winRate==null?"Collecting":`${score.winRate.toFixed(0)}%`}`,`├ Volume   ${formatUsd(score.volumeUsd)}`,`└ Realized ${formatSignedUsd(score.realizedPnlUsd)}`,"","<i>Evidence score from observed trade history, not a guarantee of skill.</i>"].join("\n"),{parse_mode:"HTML"});
@@ -494,7 +494,7 @@ export async function createTelegramBot(config: AppConfig, store: Store, scanner
 async function showDashboard(ctx: Context): Promise<void> {
   const image = await generateDashboardCard();
   await ctx.replyWithPhoto(new InputFile(image,"kapiscout-dashboard.png"),{
-    caption:["<b>🐹 KAPISCOUT</b>","<i>Your Robinhood Chain edge—without command hunting.</i>","","Choose what you want to do:"].join("\n"),
+    caption:["<b>🦫 KAPISCOUT</b>","<i>Your Robinhood Chain edge—without command hunting.</i>","","Choose what you want to do:"].join("\n"),
     parse_mode:"HTML", reply_markup: mainMenuKeyboard(),
   });
 }
@@ -535,7 +535,7 @@ async function handleUiCallback(ctx:Context, action:string, store:Store, scanner
     return void await sendPaperLeaderboard(ctx,paper,Boolean(ctx.callbackQuery?.message));
   }
   if(action==="paper_history"&&ctx.from)return void await sendPaperHistory(ctx,paper);
-  if(action==="research")return void await showUiPanel(ctx,"<b>🔎 SCAN & RESEARCH</b>\n└ Pick a tool—KapiScout will ask for the contract.",new InlineKeyboard().text("🔎 Full Scan","ui:ask:scan").text("▣ Chart","ui:ask:chart").row().text("💱 Exit Quote","ui:ask:quote").text("🧪 Reality Check","ui:ask:intel").row().text("💎 Holders","ui:ask:holders").text("Δ Holder Change","ui:ask:holderchanges").row().text("🧬 Deployer","ui:ask:devhistory").text("🕘 Timeline","ui:ask:timeline").row().text("‹ Home","ui:home"));
+  if(action==="research")return void await showUiPanel(ctx,"<b>🔎 SCAN & RESEARCH</b>\n└ Pick a tool—Kapiscout will ask for the contract.",new InlineKeyboard().text("🔎 Full Scan","ui:ask:scan").text("▣ Chart","ui:ask:chart").row().text("💱 Exit Quote","ui:ask:quote").text("🧪 Reality Check","ui:ask:intel").row().text("💎 Holders","ui:ask:holders").text("Δ Holder Change","ui:ask:holderchanges").row().text("🧬 Deployer","ui:ask:devhistory").text("🕘 Timeline","ui:ask:timeline").row().text("‹ Home","ui:home"));
   if(action==="wallets_menu")return void await showUiPanel(ctx,"<b>👀 WALLET INTELLIGENCE</b>\n└ Follow wallets, reconstruct positions, measure the edge.",new InlineKeyboard().text("➕ Track Wallet","ui:ask:addwallet").text("📋 My Wallets","ui:walletlist").row().text("💼 Portfolio","ui:portfolio").text("🧠 Wallet Score","ui:ask:walletscore").row().text("‹ Home","ui:home"));
   if(action==="signals_menu")return void await showUiPanel(ctx,"<b>⚡ CUSTOM SIGNALS</b>\n└ Build smart-money alerts with plain guided input.",new InlineKeyboard().text("➕ Create Signal","ui:ask:alertadd").text("📋 My Signals","ui:alerts").row().text("👀 Wallets","ui:wallets_menu").text("‹ Home","ui:home"));
   if(action==="paper_menu")return void await showUiPanel(ctx,"<b>🧾 PAPER TRADING</b>\n└ Test the thesis with live prices and zero real funds.",new InlineKeyboard().text("🟢 Paper Buy","ui:ask:paperbuy").text("🔴 Paper Sell","ui:ask:papersell").row().text("💼 My Portfolio","ui:paper").text("‹ Home","ui:home"));
@@ -869,11 +869,11 @@ async function sendQuote(ctx:Context,address:Address,valueUsd:number,scanner:Tok
 async function sendHolderChanges(ctx:Context,address:Address,store:Store,scanner:TokenScanner):Promise<void>{
   if(!ctx.chat)return; const chatId=String(ctx.chat.id); const scan=await withStatus(ctx,()=>scanner.scan(address,true)); if(!scan)return; await store.recordHolderSnapshot(chatId,scan);
   const snapshots=await store.holderSnapshots(chatId,address); const first=snapshots[0]; const last=snapshots.at(-1)!;
-  if(!first||snapshots.length<2)return void await replyPanel(ctx,"💎",`$${scan.token.symbol} · Holder Changes`,["First holder snapshot recorded.","Changes appear after the next 15-minute snapshot window."],"KapiScout does not invent historical holder data.");
+  if(!first||snapshots.length<2)return void await replyPanel(ctx,"💎",`$${scan.token.symbol} · Holder Changes`,["First holder snapshot recorded.","Changes appear after the next 15-minute snapshot window."],"Kapiscout does not invent historical holder data.");
   const oldMap=new Map(first.holders.map((item)=>[item.address.toLowerCase(),item.percent])); const newMap=new Map(last.holders.map((item)=>[item.address.toLowerCase(),item.percent]));
   const deltas=[...new Set([...oldMap.keys(),...newMap.keys()])].map((key)=>({key,delta:(newMap.get(key)??0)-(oldMap.get(key)??0)})).sort((a,b)=>Math.abs(b.delta)-Math.abs(a.delta)).slice(0,5);
   const topDelta=first.top10Percent==null||last.top10Percent==null?null:last.top10Percent-first.top10Percent; const countDelta=first.holdersCount==null||last.holdersCount==null?null:last.holdersCount-first.holdersCount;
-  await ctx.reply([`<b>💎 $${escapeHtml(scan.token.symbol)} · HOLDER CHANGES</b>`,`└ ${formatAge(first.capturedAt)} window`,"",`├ Holders  <b>${signedNumber(countDelta)}</b> · now ${last.holdersCount?.toLocaleString()??"N/A"}`,`└ Top 10   <b>${topDelta==null?"N/A":`${topDelta>=0?"+":""}${topDelta.toFixed(2)}%`}</b> · now ${formatPercent(last.top10Percent)}`,"","<b>Largest concentration moves</b>",...deltas.map((item,index)=>`${index===deltas.length-1?"└":"├"} <code>${compactAddress(item.key as Address)}</code> · <b>${item.delta>=0?"+":""}${item.delta.toFixed(2)}%</b>`),"","<i>Compared from KapiScout snapshots, not reconstructed history.</i>"].join("\n"),{parse_mode:"HTML"});
+  await ctx.reply([`<b>💎 $${escapeHtml(scan.token.symbol)} · HOLDER CHANGES</b>`,`└ ${formatAge(first.capturedAt)} window`,"",`├ Holders  <b>${signedNumber(countDelta)}</b> · now ${last.holdersCount?.toLocaleString()??"N/A"}`,`└ Top 10   <b>${topDelta==null?"N/A":`${topDelta>=0?"+":""}${topDelta.toFixed(2)}%`}</b> · now ${formatPercent(last.top10Percent)}`,"","<b>Largest concentration moves</b>",...deltas.map((item,index)=>`${index===deltas.length-1?"└":"├"} <code>${compactAddress(item.key as Address)}</code> · <b>${item.delta>=0?"+":""}${item.delta.toFixed(2)}%</b>`),"","<i>Compared from Kapiscout snapshots, not reconstructed history.</i>"].join("\n"),{parse_mode:"HTML"});
 }
 
 async function sendTimeline(ctx:Context,address:Address,store:Store):Promise<void>{
@@ -970,7 +970,7 @@ export function renderScanCaption(scan: TokenScan, call: CallRecord | null, crea
   const performance = callPerformance(call, mc);
   const reality = buildRealityReport(scan, call);
   if (compact) return [
-    `<b>🐹 ${escapeHtml(scan.token.name)} ($${escapeHtml(scan.token.symbol)})</b>`,
+    `<b>🦫 ${escapeHtml(scan.token.name)} ($${escapeHtml(scan.token.symbol)})</b>`,
     `└ ${formatTokenPrice(scan.market.priceUsd)} · MC <b>${formatUsd(mc)}</b> · LP ${formatUsd(scan.market.liquidityUsd)}`,
     call ? `└ Entry ${formatUsd(call.entryMarketCapUsd)} · <b>${performance}</b> · ATH ${formatMultiple(call.entryMarketCapUsd, call.athMarketCapUsd)}` : "",
     `<code>${scan.token.address}</code>`,
@@ -991,7 +991,7 @@ export function renderScanCaption(scan: TokenScan, call: CallRecord | null, crea
   ].filter((item): item is string => Boolean(item));
   const dexInfo = scan.market.pairUrl ? htmlLink("info", scan.market.pairUrl) : "info";
   const header = [
-    `<b>🐹 ${escapeHtml(scan.token.name)} ($${escapeHtml(scan.token.symbol)})</b>`,
+    `<b>🦫 ${escapeHtml(scan.token.name)} ($${escapeHtml(scan.token.symbol)})</b>`,
     `└  <b>#HOOD</b> (${escapeHtml(titleCase(scan.market.dexId ?? "No indexed DEX"))}) | ${formatAge(scan.market.pairCreatedAt)} | ${formatCompactNumber(scan.token.holdersCount)}`,
   ].join("\n");
   const stats = [
@@ -1207,7 +1207,7 @@ function medal(index: number): string {
 function settingsText(settings: ChatSettings): string {
   const state = (value: boolean) => value ? "🟢" : "⚪️";
   return [
-    "<b>⚙️ KapiScout Settings</b>",
+    "<b>⚙️ Kapiscout Settings</b>",
     "└ 🟢 enabled · ⚪️ disabled", "",
     `<b>Scanner</b>`,
     `├ Auto scan  ${state(settings.contractEnabled)}`,
@@ -1226,7 +1226,7 @@ function settingsText(settings: ChatSettings): string {
 
 function helpText(): string {
   return [
-    "<b>🐹 KapiScout · Robinhood Chain</b>",
+    "<b>🦫 Kapiscout · Robinhood Chain</b>",
     "└ Scan faster. Track honestly. Know if you can exit.", "",
     "Paste a contract address—no command required. The first scan permanently records the caller, entry MC and proof receipt.", "",
     "<b>🔎 Research</b>",

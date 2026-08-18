@@ -67,7 +67,7 @@ let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`Received ${signal}; shutting down KapiScout.`);
+  console.log(`Received ${signal}; shutting down Kapiscout.`);
   alerts.stop();
   callTracker.stop();
   digests.stop();
@@ -85,12 +85,12 @@ await bot.start({
   allowed_updates: ["message", "callback_query", "chat_member"],
   onStart: async (info) => {
     await bot.api.setMyCommands([
-      { command: "menu", description: "Open the KapiScout interface" },
+      { command: "menu", description: "Open the Kapiscout interface" },
       { command: "scan", description: "Quick token scan" },
       { command: "portfolio", description: "Open wallet portfolio" },
       { command: "settings", description: "Show group settings" },
-      { command: "help", description: "How KapiScout works" },
+      { command: "help", description: "How Kapiscout works" },
     ]);
-    console.log(`KapiScout is online as @${info.username} on Robinhood Chain ${config.chainId}.`);
+    console.log(`Kapiscout is online as @${info.username} on Robinhood Chain ${config.chainId}.`);
   },
 });

@@ -14,7 +14,7 @@ import type {
 
 const REFRESH_MS = 15_000;
 const STARTING_BALANCE_USD = 100;
-const COMPETITION_NAME = "KapiScout Paper Arena";
+const COMPETITION_NAME = "Kapiscout Paper Arena";
 const COMPETITION_DURATION_DAYS = 36_500;
 
 export interface PaperBuyResult {
