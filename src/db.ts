@@ -997,7 +997,7 @@ export class Store {
     if(existing)throw new Error(`A competition is already active: ${existing.name}`);
     const now=Date.now();
     const balance=Math.max(100,Math.min(10_000_000,input.startingBalanceUsd));
-    const duration=Math.max(1,Math.min(90,input.durationDays));
+    const duration=Math.max(1,Math.min(36_500,input.durationDays));
     const result=await this.db.prepare("INSERT INTO paper_competitions(chat_id,name,starting_balance_usd,starts_at,ends_at,status,created_by,created_at) VALUES (?,?,?,?,?,'ACTIVE',?,?)").run(input.chatId,input.name.slice(0,48),balance,now,now+duration*86_400_000,input.createdBy,now);
     return (await this.paperCompetitionById(Number(result.lastInsertRowid)))!;
   }

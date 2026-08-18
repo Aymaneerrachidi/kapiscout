@@ -25,14 +25,14 @@ import {
 } from "./utils.js";
 
 const timeframes: ChartTimeframe[] = ["auto", "5m", "15m", "1h", "4h", "1d"];
-type UiPromptAction = "scan" | "chart" | "quote" | "holders" | "holderchanges" | "pnl" | "intel" | "devhistory" | "timeline" | "addwallet" | "walletscore" | "alertadd" | "paperstart" | "paperbuy" | "papersell";
+type UiPromptAction = "scan" | "chart" | "quote" | "holders" | "holderchanges" | "pnl" | "intel" | "devhistory" | "timeline" | "addwallet" | "walletscore" | "alertadd" | "paperbuy" | "papersell" | "paperbuyamt";
 
 export async function createTelegramBot(config: AppConfig, store: Store, scanner: TokenScanner, paper:PaperCompetitionService): Promise<Bot> {
   const bot = new Bot(config.telegramToken);
   const charts = new ChartClient("robinhood");
   const refreshCooldowns = new Map<string, number>();
   const pendingWalletNames = new Map<string, { address: Address; promptMessageId: number; expiresAt: number }>();
-  const pendingUiActions = new Map<string, { action: UiPromptAction; promptMessageId: number; expiresAt: number }>();
+  const pendingUiActions = new Map<string, { action: UiPromptAction; promptMessageId: number; expiresAt: number; address?: Address }>();
 
   bot.use(async (ctx, next) => {
     if (ctx.chat) await store.ensureChat(String(ctx.chat.id), "title" in ctx.chat ? ctx.chat.title ?? null : null);
@@ -226,7 +226,6 @@ export async function createTelegramBot(config: AppConfig, store: Store, scanner
 
   bot.command(["paper","competition"],async(ctx)=>{if(ctx.chat&&ctx.from)await showPaperMenu(ctx,paper);});
   bot.command("paperlb",async(ctx)=>{if(ctx.chat)await sendPaperLeaderboard(ctx,paper);});
-  bot.command("paperjoin",async(ctx)=>{if(ctx.chat&&ctx.from){await paperAction(ctx,async ()=>Promise.resolve(await paper.join(String(ctx.chat!.id),String(ctx.from!.id),displayName(ctx))));await showPaperMenu(ctx,paper);}});
 
   bot.command("bridgealerts",async(ctx)=>{
     if(!ctx.chat||!(await canManageChat(ctx)))return; const arg=commandArgument(ctx.message?.text).toLowerCase(); if(!["on","off"].includes(arg))return void await replyPanel(ctx,"🌉","Bridge Radar",["<code>/bridgealerts on|off</code>"]);
@@ -421,8 +420,29 @@ export async function createTelegramBot(config: AppConfig, store: Store, scanner
       return;
     }
     if (action === "pb") {
-      await ctx.answerCallbackQuery({ text: "Paper buying $100…" });
-      await paperBuy(ctx, address, 100, paper, store);
+      await ctx.answerCallbackQuery({ text: "Pick a paper buy amount…" });
+      await showPaperBuyChooser(ctx, address, paper);
+      return;
+    }
+    if (action === "pbx") {
+      const amount = Number.parseFloat(rawMetric ?? "");
+      if (!Number.isFinite(amount) || amount <= 0) return void await ctx.answerCallbackQuery({ text: "Invalid amount.", show_alert: true });
+      await ctx.answerCallbackQuery({ text: `Paper buying $${amount}…` });
+      await paperBuy(ctx, address, amount, paper, store);
+      return;
+    }
+    if (action === "pbc") {
+      if (!ctx.chat || !ctx.from) return void await ctx.answerCallbackQuery({ text: "Open this inside the chat." });
+      await ctx.answerCallbackQuery({ text: "Reply with the amount" });
+      const prompt = await ctx.reply([
+        "<b>✏️ PAPER BUY AMOUNT</b>", "",
+        `Token · <code>${compactAddress(address)}</code>`, "",
+        "<i>Reply to this message with the amount in USD.</i>",
+      ].join("\n"), {
+        parse_mode: "HTML",
+        reply_markup: { force_reply: true, input_field_placeholder: "25" },
+      });
+      pendingUiActions.set(`${ctx.chat.id}:${ctx.from.id}`, { action: "paperbuyamt", promptMessageId: prompt.message_id, expiresAt: Date.now() + 10 * 60_000, address });
       return;
     }
     if (action === "c") {
@@ -437,6 +457,11 @@ export async function createTelegramBot(config: AppConfig, store: Store, scanner
     const uiPending = uiPendingKey ? pendingUiActions.get(uiPendingKey) : null;
     if (uiPending && uiPending.expiresAt > Date.now() && ctx.message.reply_to_message?.message_id === uiPending.promptMessageId) {
       pendingUiActions.delete(uiPendingKey!);
+      if (uiPending.action === "paperbuyamt" && uiPending.address) {
+        const usd = parseCompactUsd(text.trim());
+        if (!usd || usd <= 0) return void await replyPanel(ctx, "⚠️", "Amount missing", ["Reply with a number like <code>25</code>."]);
+        return void await paperBuy(ctx, uiPending.address, usd, paper, store);
+      }
       await runUiPromptAction(ctx, uiPending.action, text, store, scanner, charts, config, paper);
       return;
     }
@@ -497,11 +522,6 @@ async function handleUiCallback(ctx:Context, action:string, store:Store, scanner
   if(!ctx.chat)return;
   const chatId=String(ctx.chat.id);
   if(action==="paper_menu")return void await showPaperMenu(ctx,paper);
-  if(action==="paper_join"&&ctx.from){
-    const joined=await paperAction(ctx,async ()=>Promise.resolve(await paper.join(chatId,String(ctx.from!.id),displayName(ctx))));
-    if(joined)await showPaperMenu(ctx,paper);
-    return;
-  }
   if(action==="paper"&&ctx.from)return void await sendPaperPortfolio(ctx,paper);
   if(action.startsWith("paper_refresh:")&&ctx.from){
     const ownerId=action.slice("paper_refresh:".length);
@@ -517,12 +537,6 @@ async function handleUiCallback(ctx:Context, action:string, store:Store, scanner
     return void await sendPaperLeaderboard(ctx,paper,Boolean(ctx.callbackQuery?.message));
   }
   if(action==="paper_history"&&ctx.from)return void await sendPaperHistory(ctx,paper);
-  if(action==="paper_end"){
-    if(!(await canManageChat(ctx)))return void await replyPanel(ctx,"🔒","Admin action",["Only group admins can end the competition."]);
-    const ended=await paperAction(ctx,async ()=>await paper.end(chatId));
-    if(ended)await sendPaperLeaderboard(ctx,paper,Boolean(ctx.callbackQuery?.message));
-    return;
-  }
   if(action==="research")return void await showUiPanel(ctx,"<b>🔎 SCAN & RESEARCH</b>\n└ Pick a tool—KapiScout will ask for the contract.",new InlineKeyboard().text("🔎 Full Scan","ui:ask:scan").text("▣ Chart","ui:ask:chart").row().text("💱 Exit Quote","ui:ask:quote").text("🧪 Reality Check","ui:ask:intel").row().text("💎 Holders","ui:ask:holders").text("Δ Holder Change","ui:ask:holderchanges").row().text("🧬 Deployer","ui:ask:devhistory").text("🕘 Timeline","ui:ask:timeline").row().text("‹ Home","ui:home"));
   if(action==="wallets_menu")return void await showUiPanel(ctx,"<b>👀 WALLET INTELLIGENCE</b>\n└ Follow wallets, reconstruct positions, measure the edge.",new InlineKeyboard().text("➕ Track Wallet","ui:ask:addwallet").text("📋 My Wallets","ui:walletlist").row().text("💼 Portfolio","ui:portfolio").text("🧠 Wallet Score","ui:ask:walletscore").row().text("‹ Home","ui:home"));
   if(action==="signals_menu")return void await showUiPanel(ctx,"<b>⚡ CUSTOM SIGNALS</b>\n└ Build smart-money alerts with plain guided input.",new InlineKeyboard().text("➕ Create Signal","ui:ask:alertadd").text("📋 My Signals","ui:alerts").row().text("👀 Wallets","ui:wallets_menu").text("‹ Home","ui:home"));
@@ -562,7 +576,7 @@ function settingsKeyboard(settings:ChatSettings):InlineKeyboard{
 async function requestUiInput(ctx:Context,action:UiPromptAction,pending:Map<string,{action:UiPromptAction;promptMessageId:number;expiresAt:number}>):Promise<void>{
   if(!ctx.chat||!ctx.from)return;
   const prompts:Record<UiPromptAction,{title:string;body:string;placeholder:string}>={
-    scan:{title:"Scan a token",body:"Reply with the Robinhood Chain contract address.",placeholder:"0x…"},chart:{title:"Generate a chart",body:"Reply with: <code>CA 15m mc</code>",placeholder:"0x… 15m mc"},quote:{title:"Live exit quote",body:"Reply with: <code>CA amount</code>",placeholder:"0x… 1k"},holders:{title:"Holder map",body:"Reply with the token contract address.",placeholder:"0x…"},holderchanges:{title:"Holder changes",body:"Reply with the token contract address.",placeholder:"0x…"},pnl:{title:"Token PNL",body:"Reply with the called token contract address.",placeholder:"0x…"},intel:{title:"Reality Check",body:"Reply with the token contract address.",placeholder:"0x…"},devhistory:{title:"Deployer reputation",body:"Reply with the token contract address.",placeholder:"0x…"},timeline:{title:"Token timeline",body:"Reply with the token contract address.",placeholder:"0x…"},addwallet:{title:"Track a wallet",body:"Reply with: <code>wallet address + name</code>",placeholder:"0x… Smart Money"},walletscore:{title:"Smart Wallet Score",body:"Reply with the wallet address.",placeholder:"0x…"},alertadd:{title:"Create a signal",body:"Reply like: <code>Early Buyers direction=buy minvalue=5k maxmc=100k wallets=2 window=5</code>",placeholder:"Signal name and filters"},paperstart:{title:"Start a paper competition",body:"Reply with: <code>Name | starting balance | days</code>",placeholder:"Kapi Cup | 10k | 7"},paperbuy:{title:"Paper buy",body:"Reply with: <code>CA amount</code>",placeholder:"0x… 100"},papersell:{title:"Paper sell",body:"Reply with: <code>CA 50%</code> or <code>CA all</code>",placeholder:"0x… 50%"},
+    scan:{title:"Scan a token",body:"Reply with the Robinhood Chain contract address.",placeholder:"0x…"},chart:{title:"Generate a chart",body:"Reply with: <code>CA 15m mc</code>",placeholder:"0x… 15m mc"},quote:{title:"Live exit quote",body:"Reply with: <code>CA amount</code>",placeholder:"0x… 1k"},holders:{title:"Holder map",body:"Reply with the token contract address.",placeholder:"0x…"},holderchanges:{title:"Holder changes",body:"Reply with the token contract address.",placeholder:"0x…"},pnl:{title:"Token PNL",body:"Reply with the called token contract address.",placeholder:"0x…"},intel:{title:"Reality Check",body:"Reply with the token contract address.",placeholder:"0x…"},devhistory:{title:"Deployer reputation",body:"Reply with the token contract address.",placeholder:"0x…"},timeline:{title:"Token timeline",body:"Reply with the token contract address.",placeholder:"0x…"},addwallet:{title:"Track a wallet",body:"Reply with: <code>wallet address + name</code>",placeholder:"0x… Smart Money"},walletscore:{title:"Smart Wallet Score",body:"Reply with the wallet address.",placeholder:"0x…"},alertadd:{title:"Create a signal",body:"Reply like: <code>Early Buyers direction=buy minvalue=5k maxmc=100k wallets=2 window=5</code>",placeholder:"Signal name and filters"},paperbuy:{title:"Paper buy",body:"Reply with: <code>CA amount</code>",placeholder:"0x… 100"},papersell:{title:"Paper sell",body:"Reply with: <code>CA 50%</code> or <code>CA all</code>",placeholder:"0x… 50%"},paperbuyamt:{title:"Paper buy amount",body:"Reply with the amount in USD to buy.",placeholder:"25"},
   };
   const item=prompts[action];if(!item)return;
   const message=await ctx.reply([`<b>→ ${item.title}</b>`,"",item.body,"","<i>Reply to this message. No command needed.</i>"].join("\n"),{parse_mode:"HTML",reply_markup:{force_reply:true,input_field_placeholder:item.placeholder}});
@@ -571,17 +585,6 @@ async function requestUiInput(ctx:Context,action:UiPromptAction,pending:Map<stri
 
 async function runUiPromptAction(ctx:Context,action:UiPromptAction,text:string,store:Store,scanner:TokenScanner,charts:ChartClient,config:AppConfig,paper:PaperCompetitionService):Promise<void>{
   if(!ctx.chat||!ctx.from)return;const chatId=String(ctx.chat.id);const address=extractAddresses(text)[0];
-  if(action==="paperstart"){
-    if(!(await canManageChat(ctx)))return void await replyPanel(ctx,"🔒","Admin action",["Only group admins can start a competition."]);
-    const [rawName,rawBalance,rawDays]=text.split("|").map(item=>item.trim());
-    const name=(rawName||"KapiScout Paper Cup").slice(0,48);
-    const balance=parseCompactUsd(rawBalance||"10000")??10_000;
-    const days=Number.parseFloat(rawDays||"7");
-    if(!Number.isFinite(balance)||balance<100||!Number.isFinite(days)||days<1||days>90)return void await replyPanel(ctx,"⚠️","Competition setup invalid",["Use: <code>Name | starting balance | days</code>","Example: <code>Kapi Cup | 10k | 7</code>"]);
-    const created=await paperAction(ctx,async ()=>Promise.resolve(await paper.create(chatId,name,balance,days,String(ctx.from!.id))));
-    if(created){await paper.join(chatId,String(ctx.from.id),displayName(ctx));await showPaperMenu(ctx,paper);}
-    return;
-  }
   const needAddress=()=>replyPanel(ctx,"⚠️","Address missing",["Send a complete <code>0x…</code> address."],"Tap the menu action again to retry.");
   if(action!=="alertadd"&&!address)return void await needAddress();
   if(action==="paperbuy"){const usd=parseCompactUsd(text.replace(/0x[a-fA-F0-9]{40}/u,"").trim());if(!usd||usd<=0)return void await replyPanel(ctx,"⚠️","Amount missing",["Example: <code>0x… 100</code>"]);return void await paperBuy(ctx,address!,usd,paper,store);}
@@ -605,8 +608,6 @@ async function runUiPromptAction(ctx:Context,action:UiPromptAction,text:string,s
     if(!(await canManageChat(ctx)))return void await replyPanel(ctx,"🔒","Admin setting",["Only group admins can create signals."]);
     const argument=`add ${text}`;const values=parseRuleValues(argument);const name=text.split(/\s+[a-z]+=|$/iu)[0]?.trim().slice(0,32)||"Signal";const rule=await store.addAlertRule({chatId,name,direction:values.direction,minValueUsd:values.minvalue,minMarketCapUsd:values.minmc,maxMarketCapUsd:values.maxmc||null,minLiquidityUsd:values.minlp,minWallets:Math.max(1,Math.floor(values.wallets)),windowMinutes:Math.max(1,Math.floor(values.window))});return void await replyPanel(ctx,"✅","Signal armed",[`<b>#${rule.id} · ${escapeHtml(rule.name)}</b>`,`${rule.direction} · ≥${formatUsd(rule.minValueUsd)} · ${rule.minWallets} wallet${rule.minWallets===1?"":"s"}/${rule.windowMinutes}m`]);
   }
-  if(action==="paperbuy"){const usd=parseCompactUsd(text.replace(/0x[a-fA-F0-9]{40}/u,"").trim());if(!usd||usd<=0)return void await replyPanel(ctx,"⚠️","Amount missing",["Example: <code>0x… 100</code>"]);return void await paperBuy(ctx,address!,usd,paper,store);}
-  if(action==="papersell"){const rest=text.replace(/0x[a-fA-F0-9]{40}/u,"").trim().toLowerCase();const fraction=rest==="all"?1:Number.parseFloat(rest)/100;if(!Number.isFinite(fraction)||fraction<=0)return void await replyPanel(ctx,"⚠️","Invalid size",["Use a percentage or all."]);return void await paperSell(ctx,address!,fraction,paper,store);}
 }
 
 async function sendUiCallList(ctx:Context,action:string,store:Store):Promise<void>{
@@ -846,26 +847,27 @@ async function sendTimeline(ctx:Context,address:Address,store:Store):Promise<voi
   await ctx.reply([`<b>🕘 $${escapeHtml(events[0]!.symbol)} · EVENT TIMELINE</b>`,"",...events.map((event,index)=>`${index===events.length-1?"└":"├"} ${icons[event.kind]??"•"} <b>${escapeHtml(event.title)}</b> · ${formatAge(event.createdAt)}${event.valueUsd==null?"":` · ${formatUsd(event.valueUsd)}`}`),"",`<code>${address}</code>`].join("\n"),{parse_mode:"HTML"});
 }
 
+async function showPaperBuyChooser(ctx:Context,address:Address,paper:PaperCompetitionService):Promise<void>{
+  if(!ctx.chat||!ctx.from)return;
+  const account=await paperAction(ctx,async ()=>Promise.resolve(await paper.ensureAccount(String(ctx.chat!.id),String(ctx.from!.id),displayName(ctx))));if(!account)return;
+  const caption=["<b>🧾 PAPER BUY</b>",`└ <code>${compactAddress(address)}</code>`,"",`Your cash  <b>${formatUsd(account.cashBalanceUsd)}</b>`,"","Choose the amount to buy with:"].join("\n");
+  const keyboard=new InlineKeyboard().text("$10",`pbx:${address}:10`).text("$25",`pbx:${address}:25`).text("$50",`pbx:${address}:50`).text("$100",`pbx:${address}:100`).row().text("✏️ Custom",`pbc:${address}`).text("💳 My Balance","ui:paper").row().text("‹ Paper Arena","ui:paper_menu");
+  await ctx.reply(caption,{parse_mode:"HTML",reply_markup:keyboard});
+}
+
 async function showPaperMenu(ctx:Context,paper:PaperCompetitionService):Promise<void>{
   if(!ctx.chat||!ctx.from)return;
-  const chatId=String(ctx.chat.id);const userId=String(ctx.from.id);const competition=await paper.latest(chatId);
-  if(!competition||competition.status==="ENDED"){
-    const previous=competition?`\n\nLast event · <b>${escapeHtml(competition.name)}</b> · finished`:"";
-    const keyboard=new InlineKeyboard().text("🏁 Start Competition","ui:ask:paperstart").row();
-    if(competition)keyboard.text("🏆 Final Standings","ui:paper_lb");else keyboard.text("❔ How it works","ui:guide");
-    keyboard.text("‹ Home","ui:home");
-    return void await showUiPanel(ctx,`<b>🏁 KAPISCOUT PAPER ARENA</b>\n└ Exact onchain fills. Zero real funds.${previous}`,keyboard);
-  }
-  const account=await paper.account(competition.id,userId);
-  const remaining=Math.max(0,competition.endsAt-Date.now());const days=Math.floor(remaining/86_400_000);const hours=Math.floor(remaining%86_400_000/3_600_000);
-  const caption=["<b>🏁 KAPISCOUT PAPER ARENA</b>",`└ <b>${escapeHtml(competition.name)}</b> · ${days}d ${hours}h left`,"",`Starting cash  <b>${formatUsd(competition.startingBalanceUsd)}</b>`,`Players        <b>${await paper.participants(competition.id)}</b>`,"",account?`You are in · cash <b>${formatUsd(account.cashBalanceUsd)}</b>`:"Tap <b>Join Competition</b> to receive your paper balance.","","<i>Fills use the official Uniswap v4 quote. Gas and price impact count.</i>"].join("\n");
-  const keyboard=account?new InlineKeyboard().text("🟢 Buy","ui:ask:paperbuy").text("🔴 Sell","ui:ask:papersell").row().text("💳 My Balance","ui:paper").text("🏆 Leaderboard","ui:paper_lb").row().text("🕘 Trade History","ui:paper_history").text("⏹ End","ui:paper_end").row().text("‹ Home","ui:home"):new InlineKeyboard().text("✅ Join Competition","ui:paper_join").row().text("🏆 Leaderboard","ui:paper_lb").text("‹ Home","ui:home");
+  const chatId=String(ctx.chat.id);const userId=String(ctx.from.id);
+  const account=await paperAction(ctx,async ()=>Promise.resolve(await paper.ensureAccount(chatId,userId,displayName(ctx))));if(!account)return;
+  const players=await paper.participants(account.competitionId);
+  const caption=["<b>🏁 KAPISCOUT PAPER ARENA</b>","└ Every trader starts with <b>$100</b> · zero real funds","",`Your cash  <b>${formatUsd(account.cashBalanceUsd)}</b> · PNL <b>${formatSignedUsd(account.cashBalanceUsd-account.startingBalanceUsd)}</b>`,`Players    <b>${players}</b>`,"","<i>Fills use the official Uniswap v4 quote. Gas and price impact count.</i>"].join("\n");
+  const keyboard=new InlineKeyboard().text("🟢 Buy","ui:ask:paperbuy").text("🔴 Sell","ui:ask:papersell").row().text("💳 My Balance","ui:paper").text("🏆 Best Traders","ui:paper_lb").row().text("🕘 Trade History","ui:paper_history").text("‹ Home","ui:home");
   await showUiPanel(ctx,caption,keyboard);
 }
 
 async function paperBuy(ctx:Context,address:Address,valueUsd:number,paper:PaperCompetitionService,store:Store):Promise<void>{
   if(!ctx.chat||!ctx.from)return;
-  const result=await paperAction(ctx,async ()=>await paper.buy(String(ctx.chat!.id),String(ctx.from!.id),address,valueUsd));if(!result)return;
+  const result=await paperAction(ctx,async ()=>await paper.buy(String(ctx.chat!.id),String(ctx.from!.id),address,valueUsd,displayName(ctx)));if(!result)return;
   await store.recordTokenEvent({chatId:String(ctx.chat.id),tokenAddress:address,symbol:result.scan.token.symbol,kind:"PAPER_BUY",title:`Competition buy ${formatUsd(result.spentUsd)}`,txHash:null,valueUsd:result.spentUsd});
   await replyPanel(ctx,"🟢",`FILLED · BUY $${result.scan.token.symbol}`,[`├ Cost       <b>${formatUsd(result.spentUsd)}</b>`,`├ Tokens     <b>${formatCompactNumber(result.tokenAmount)}</b>`,`├ Fill price ${formatTokenPrice(result.executionPriceUsd)}`,`├ Impact     ${formatImpact(result.priceImpactPercent)}`,`└ Gas        ${formatUsd(result.gasCostUsd)}`],"Official Uniswap v4 eth_call · no transaction sent.");
   await sendPaperPortfolio(ctx,paper);
@@ -873,7 +875,7 @@ async function paperBuy(ctx:Context,address:Address,valueUsd:number,paper:PaperC
 
 async function paperSell(ctx:Context,address:Address,fraction:number,paper:PaperCompetitionService,store:Store):Promise<void>{
   if(!ctx.chat||!ctx.from)return;
-  const result=await paperAction(ctx,async ()=>await paper.sell(String(ctx.chat!.id),String(ctx.from!.id),address,Math.min(1,fraction)));if(!result)return;
+  const result=await paperAction(ctx,async ()=>await paper.sell(String(ctx.chat!.id),String(ctx.from!.id),address,Math.min(1,fraction),displayName(ctx)));if(!result)return;
   await store.recordTokenEvent({chatId:String(ctx.chat.id),tokenAddress:address,symbol:result.scan.token.symbol,kind:"PAPER_SELL",title:`Competition sell ${(Math.min(1,fraction)*100).toFixed(0)}%`,txHash:null,valueUsd:result.netProceedsUsd});
   await replyPanel(ctx,result.realizedPnlUsd>=0?"🟢":"🔴",`FILLED · SELL $${result.scan.token.symbol}`,[`├ Net return <b>${formatUsd(result.netProceedsUsd)}</b>`,`├ Realized   <b>${formatSignedUsd(result.realizedPnlUsd)}</b>`,`├ Fill price ${formatTokenPrice(result.executionPriceUsd)}`,`├ Impact     ${formatImpact(result.priceImpactPercent)}`,`└ Gas        ${formatUsd(result.gasCostUsd)}`],"Official Uniswap v4 eth_call · PNL locked into your record.");
   await sendPaperPortfolio(ctx,paper);
@@ -881,7 +883,7 @@ async function paperSell(ctx:Context,address:Address,fraction:number,paper:Paper
 
 async function sendPaperPortfolio(ctx:Context,paper:PaperCompetitionService,edit=false):Promise<void>{
   if(!ctx.chat||!ctx.from)return;
-  const snapshot=await paperAction(ctx,async ()=>await paper.portfolio(String(ctx.chat!.id),String(ctx.from!.id)));if(!snapshot)return;
+  const snapshot=await paperAction(ctx,async ()=>await paper.portfolio(String(ctx.chat!.id),String(ctx.from!.id),displayName(ctx)));if(!snapshot)return;
   const image=await generatePaperPortfolioCard(snapshot);const caption=[`<b>💳 ${escapeHtml(snapshot.competition.name)} · MY BALANCE</b>`,`└ Rank <b>#${snapshot.rank??"—"}</b> of ${snapshot.participants} · ${snapshot.competition.status==="ACTIVE"?"live":"final"}`,"",`Balance  <b>${formatUsd(snapshot.equityUsd)}</b> · PNL <b>${formatSignedUsd(snapshot.totalPnlUsd)}</b>`,`Cash ${formatUsd(snapshot.cashBalanceUsd)} · Positions ${formatUsd(snapshot.positionsValueUsd)}`,"",snapshot.positions.some(item=>!item.quoteAvailable)?"⚠️ One or more positions currently have no executable exit and are valued at $0.":"<i>Executable exit value after estimated gas.</i>"].join("\n");
   const keyboard=new InlineKeyboard().text("↻ Refresh",`ui:paper_refresh:${ctx.from.id}`).text("🏆 Rankings","ui:paper_lb").row().text("🟢 Buy","ui:ask:paperbuy").text("🔴 Sell","ui:ask:papersell").row().text("‹ Arena","ui:paper_menu");
   if(edit){try{await ctx.editMessageMedia({type:"photo",media:new InputFile(image,"kapiscout-paper-balance.png"),caption,parse_mode:"HTML"},{reply_markup:keyboard});return;}catch{/* Send a fresh card if Telegram cannot edit the original media. */}}
@@ -896,7 +898,7 @@ async function sendPaperLeaderboard(ctx:Context,paper:PaperCompetitionService,ed
 }
 
 async function sendPaperHistory(ctx:Context,paper:PaperCompetitionService):Promise<void>{
-  if(!ctx.chat||!ctx.from)return;const result=await paperAction(ctx,async ()=>Promise.resolve(paper.history(String(ctx.chat!.id),String(ctx.from!.id))));if(!result)return;
+  if(!ctx.chat||!ctx.from)return;const result=await paperAction(ctx,async ()=>Promise.resolve(paper.history(String(ctx.chat!.id),String(ctx.from!.id),12,displayName(ctx))));if(!result)return;
   const lines=result.trades.map((trade,index)=>`${index===result.trades.length-1?"└":"├"} ${trade.side==="BUY"?"🟢":"🔴"} <b>${trade.side} $${escapeHtml(trade.symbol)}</b> · ${formatUsd(trade.side==="BUY"?trade.grossValueUsd+trade.gasCostUsd:trade.grossValueUsd-trade.gasCostUsd)}${trade.realizedPnlUsd==null?"":` · ${formatSignedUsd(trade.realizedPnlUsd)}`} · ${formatAge(trade.createdAt)}`);
   await ctx.reply([`<b>🕘 ${escapeHtml(result.competition.name)} · TRADE HISTORY</b>`,`└ Exact fills · gas included`,"",...(lines.length?lines:["No trades yet."])].join("\n"),{parse_mode:"HTML",reply_markup:new InlineKeyboard().text("💳 My Balance","ui:paper").text("‹ Arena","ui:paper_menu")});
 }
@@ -1002,7 +1004,7 @@ function tokenKeyboard(scan: TokenScan, call: CallRecord | null, metric: ChartMe
     .text("▣ Chart", `c:${address}:${metricCode}:${timeframe}`).row()
     .text("💱 Quote", `q:${address}`)
     .text("🕘 Timeline", `tl:${address}`)
-    .text("🧾 Paper $100", `pb:${address}`).row();
+    .text("🧾 Paper Buy", `pb:${address}`).row();
   if (scan.market.pairUrl) keyboard.url("DS", scan.market.pairUrl);
   if (scan.market.pairAddress) keyboard.url("GT", `https://www.geckoterminal.com/robinhood/pools/${scan.market.pairAddress}`);
   keyboard.url("EXP", `${config.blockscoutBrowserUrl}/token/${address}`);

@@ -13,6 +13,9 @@ import type {
 } from "./types.js";
 
 const REFRESH_MS = 15_000;
+const STARTING_BALANCE_USD = 100;
+const COMPETITION_NAME = "KapiScout Paper Arena";
+const COMPETITION_DURATION_DAYS = 36_500;
 
 export interface PaperBuyResult {
   scan: TokenScan;
@@ -65,36 +68,40 @@ export class PaperCompetitionService {
     return await this.store.joinPaperCompetition(competition.id,userId,username);
   }
 
-  async buy(chatId:string,userId:string,address:Address,valueUsd:number):Promise<PaperBuyResult>{
-    const competition=await this.requireActive(chatId);
-    await this.requireAccount(competition.id,userId);
+  async ensureAccount(chatId:string,userId:string,username?:string): Promise<PaperCompetitionAccount> {
+    const competition=await this.ensureCompetition(chatId);
+    const existing=await this.store.paperCompetitionAccount(competition.id,userId);
+    if(existing&&!username)return existing;
+    return await this.store.joinPaperCompetition(competition.id,userId,username?.trim()||existing?.username||userId);
+  }
+
+  async buy(chatId:string,userId:string,address:Address,valueUsd:number,username?:string):Promise<PaperBuyResult>{
+    const account=await this.ensureAccount(chatId,userId,username);
     if(!Number.isFinite(valueUsd)||valueUsd<=0)throw new Error("Choose a paper buy amount above $0.");
     const scan=await this.scanner.scan(address,true);
     const quote=await this.scanner.quotePaperBuy(scan,valueUsd);
-    const position=await this.store.executeCompetitionBuy({competitionId:competition.id,userId,tokenAddress:address,symbol:scan.token.symbol,quote,marketCapUsd:scan.market.marketCapUsd??scan.market.fdvUsd});
-    this.clearCompetitionCache(competition.id);
+    const position=await this.store.executeCompetitionBuy({competitionId:account.competitionId,userId,tokenAddress:address,symbol:scan.token.symbol,quote,marketCapUsd:scan.market.marketCapUsd??scan.market.fdvUsd});
+    this.clearCompetitionCache(account.competitionId);
     return {scan,position,spentUsd:quote.grossValueUsd+quote.gasCostUsd,gasCostUsd:quote.gasCostUsd,tokenAmount:quote.tokenAmount,executionPriceUsd:quote.executionPriceUsd,priceImpactPercent:quote.priceImpactPercent};
   }
 
-  async sell(chatId:string,userId:string,address:Address,fraction:number):Promise<PaperSellResult>{
-    const competition=await this.requireActive(chatId);
-    await this.requireAccount(competition.id,userId);
+  async sell(chatId:string,userId:string,address:Address,fraction:number,username?:string):Promise<PaperSellResult>{
+    const account=await this.ensureAccount(chatId,userId,username);
     if(!Number.isFinite(fraction)||fraction<=0||fraction>1)throw new Error("Choose a sell size from 1% to 100%.");
-    const before=await this.store.paperCompetitionPosition(competition.id,userId,address);
+    const before=await this.store.paperCompetitionPosition(account.competitionId,userId,address);
     if(!before||before.tokenAmount<=0)throw new Error("You do not have an open position in this token.");
     const tokenAmount=before.tokenAmount*fraction;
     const scan=await this.scanner.scan(address,true);
     const quote=await this.scanner.quotePaperSell(scan,tokenAmount);
-    const result=await this.store.executeCompetitionSell({competitionId:competition.id,userId,tokenAddress:address,symbol:before.symbol,quote,marketCapUsd:scan.market.marketCapUsd??scan.market.fdvUsd});
-    this.clearCompetitionCache(competition.id);
+    const result=await this.store.executeCompetitionSell({competitionId:account.competitionId,userId,tokenAddress:address,symbol:before.symbol,quote,marketCapUsd:scan.market.marketCapUsd??scan.market.fdvUsd});
+    this.clearCompetitionCache(account.competitionId);
     return {scan,position:result.position,grossValueUsd:quote.grossValueUsd,netProceedsUsd:result.netProceedsUsd,gasCostUsd:quote.gasCostUsd,tokenAmount:quote.tokenAmount,executionPriceUsd:quote.executionPriceUsd,priceImpactPercent:quote.priceImpactPercent,realizedPnlUsd:result.realizedPnlUsd};
   }
 
-  async portfolio(chatId:string,userId:string):Promise<PaperPortfolioSnapshot>{
-    const competition=await this.store.latestPaperCompetition(chatId);
-    if(!competition)throw new Error("No paper competition exists in this chat yet.");
-    const account=await this.requireAccount(competition.id,userId);
-    const positions=await this.valuePositions(competition.id,userId);
+  async portfolio(chatId:string,userId:string,username?:string):Promise<PaperPortfolioSnapshot>{
+    const account=await this.ensureAccount(chatId,userId,username);
+    const competition=(await this.store.paperCompetitionById(account.competitionId))!;
+    const positions=await this.valuePositions(account.competitionId,userId);
     const livePositionsValue=positions.reduce((sum,item)=>sum+item.liquidationValueUsd,0);
     const liveEquity=account.cashBalanceUsd+livePositionsValue;
     const equityUsd=competition.status==="ENDED"&&account.finalEquityUsd!=null?account.finalEquityUsd:liveEquity;
@@ -110,16 +117,14 @@ export class PaperCompetitionService {
   }
 
   async leaderboard(chatId:string):Promise<{competition:PaperCompetition;entries:PaperLeaderboardEntry[]}>{
-    const competition=await this.store.latestPaperCompetition(chatId);
-    if(!competition)throw new Error("No paper competition exists in this chat yet.");
+    const competition=await this.ensureCompetition(chatId);
     return {competition,entries:await this.leaderboardForCompetition(competition)};
   }
 
-  async history(chatId:string,userId:string,limit=12):Promise<{competition:PaperCompetition;trades:PaperCompetitionTrade[]}>{
-    const competition=await this.store.latestPaperCompetition(chatId);
-    if(!competition)throw new Error("No paper competition exists in this chat yet.");
-    await this.requireAccount(competition.id,userId);
-    return {competition,trades:await this.store.paperCompetitionTrades(competition.id,userId,limit)};
+  async history(chatId:string,userId:string,limit=12,username?:string):Promise<{competition:PaperCompetition;trades:PaperCompetitionTrade[]}>{
+    const account=await this.ensureAccount(chatId,userId,username);
+    const competition=(await this.store.paperCompetitionById(account.competitionId))!;
+    return {competition,trades:await this.store.paperCompetitionTrades(account.competitionId,userId,limit)};
   }
 
   async end(chatId:string):Promise<{competition:PaperCompetition;entries:PaperLeaderboardEntry[]}>{
@@ -174,6 +179,12 @@ export class PaperCompetitionService {
     const competition=await this.store.activePaperCompetition(chatId);
     if(!competition)throw new Error("There is no active paper competition in this chat.");
     return competition;
+  }
+
+  private async ensureCompetition(chatId:string): Promise<PaperCompetition> {
+    const existing=await this.store.activePaperCompetition(chatId);
+    if(existing)return existing;
+    return await this.store.createPaperCompetition({chatId,name:COMPETITION_NAME,startingBalanceUsd:STARTING_BALANCE_USD,durationDays:COMPETITION_DURATION_DAYS,createdBy:"system"});
   }
 
   private async requireAccount(competitionId:number,userId:string): Promise<PaperCompetitionAccount> {
