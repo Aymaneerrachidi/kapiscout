@@ -1,8 +1,10 @@
-node_modules/
-dist/
+﻿.vercel
 .env
+.env.*
+!.env.example
+node_modules/
 data/
-coverage/
 *.log
-.DS_Store
+dist/
 __MACOSX/
+.DS_Store

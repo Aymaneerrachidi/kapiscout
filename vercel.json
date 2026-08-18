@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "outputDirectory": ".",
   "functions": {
     "api/bot.ts": {
       "memory": 1024,
