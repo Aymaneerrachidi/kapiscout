@@ -1239,7 +1239,14 @@ function helpText(): string {
     "└ /portfolio · /walletscore · /alert", "",
     "<b>⚙️ Setup</b>",
     "└ /settings · /showchart · /chartmode · /timeframe · /minmc", "",
-    "<i>Prefix a contract with . to ignore it.</i>",
+    "<b>🔀 Shortcuts</b>",
+    "├ /c chart · /reality intel · /th holders · /plays active",
+    "├ /lb leaderboard · /reallb real alpha · /groupcard summary",
+    "├ /wscore wallet score · /deployer devhistory · /holderdelta",
+    "└ /exitquote quote · /renamewallet namewallet · /competition paper", "",
+    "<b>🔘 Scan card buttons</b>",
+    "└ Refresh · PNL · Reality · Holders · MC↔Price · ⏱ timeframe cycle · Chart · Quote · Timeline", "",
+    "<i>Prefix a contract with . to ignore it. A trailing , unlocks the detailed scan caption.</i>",
   ].join("\n");
 }
 

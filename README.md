@@ -113,6 +113,26 @@ The Telegram command picker intentionally shows only `/menu`, `/scan`, `/portfol
 
 Prefix a contract with `.` to prevent automatic scanning. A trailing `.` requests compact output; a trailing `,` requests detailed output.
 
+Every command above has a short alias that is not shown in the Telegram picker:
+
+| Alias | Original |
+| --- | --- |
+| `/c CA` | `/chart CA` |
+| `/reality CA` | `/intel CA` |
+| `/th CA` | `/holders CA` |
+| `/holderdelta CA` | `/holderchanges CA` |
+| `/plays` | `/active` |
+| `/leaderboard` | `/lb` |
+| `/realalpha` | `/reallb` |
+| `/groupcard` | `/summary` |
+| `/wscore wallet` | `/walletscore wallet` |
+| `/deployer CA` | `/devhistory CA` |
+| `/exitquote CA [amount]` | `/quote CA [amount]` |
+| `/renamewallet 0x… New Name` | `/namewallet 0x… New Name` |
+| `/competition` | `/paper` |
+
+Scan-card inline buttons also toggle the chart metric (MC ↔ price) and cycle the timeframe (auto → 5m → 15m → 1h → 4h → 1d).
+
 ### Paper Arena accounting
 
 An admin starts an event from `/paper` with a name, starting balance and duration. Every participant receives the same paper cash. Buys debit quoted notional plus estimated gas; sells credit executable proceeds minus gas. Open positions are valued by a fresh full-position Uniswap v4 exit quote, not spot price. Positions without an executable pool are conservatively worth $0. Rankings refresh at most once every 15 seconds, and the finalizer freezes equity, PNL and rank when the event ends.
