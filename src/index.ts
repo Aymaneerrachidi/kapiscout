@@ -87,6 +87,10 @@ await bot.start({
     await bot.api.setMyCommands([
       { command: "menu", description: "Open the Kapiscout interface" },
       { command: "scan", description: "Quick token scan" },
+      { command: "paper", description: "Open the Paper Arena" },
+      { command: "paperbuy", description: "Paper buy - CA amount" },
+      { command: "papersell", description: "Paper sell - CA % or all" },
+      { command: "paperlb", description: "Paper Arena standings" },
       { command: "portfolio", description: "Open wallet portfolio" },
       { command: "settings", description: "Show group settings" },
       { command: "help", description: "How Kapiscout works" },
