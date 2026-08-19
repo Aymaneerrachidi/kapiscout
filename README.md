@@ -76,7 +76,7 @@ For plain contract detection in Telegram groups, disable privacy for the bot thr
 
 ## User commands
 
-The Telegram command picker intentionally shows only `/menu`, `/scan`, `/portfolio`, `/calls`, `/paper`, `/settings` and `/help`. Every advanced action below remains available as a shortcut and through the button interface.
+The Telegram command picker shows the primary commands: `/menu`, `/scan`, `/paper`, `/paperbuy`, `/papersell`, `/paperlb`, `/portfolio`, `/settings` and `/help`. Every advanced action remains available as a shortcut and through the button interface.
 
 | Command | Purpose |
 | --- | --- |

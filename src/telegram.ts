@@ -502,7 +502,10 @@ async function showDashboard(ctx: Context): Promise<void> {
 function mainMenuKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
     .text("🔎 Scan & Research","ui:research").text("👀 Wallets","ui:wallets_menu").row()
-    .text("⚙️ Settings","ui:settings").text("❔ Guide","ui:guide");
+    .text("🎯 Calls","ui:calls_menu").text("🧾 Paper","ui:paper_menu").row()
+    .text("⚡ Signals","ui:signals_menu").text("🌉 Bridge","ui:bridge_menu").row()
+    .text("☀️ Daily Edge","ui:digest_menu").text("⚙️ Settings","ui:settings").row()
+    .text("❔ Guide","ui:guide");
 }
 
 async function handleUiCallback(ctx:Context, action:string, store:Store, scanner:TokenScanner, charts:ChartClient, config:AppConfig, paper:PaperCompetitionService, pending:Map<string,{action:UiPromptAction;promptMessageId:number;expiresAt:number}>,refreshCooldowns:Map<string,number>):Promise<void>{
@@ -1237,6 +1240,10 @@ function helpText(): string {
     "├ /namewallet <code>0x… New Name</code>",
     "├ /wallets · /removewallet",
     "└ /portfolio · /walletscore · /alert", "",
+    "<b>🧾 Paper Arena</b>",
+    "├ /paper opens the arena · every trader starts with $100",
+    "├ /paperbuy <code>CA 100</code> · /papersell <code>CA 50%|all</code>",
+    "└ /paperlb live or final standings", "",
     "<b>⚙️ Setup</b>",
     "└ /settings · /showchart · /chartmode · /timeframe · /minmc", "",
     "<b>🔀 Shortcuts</b>",

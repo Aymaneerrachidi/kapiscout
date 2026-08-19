@@ -27,6 +27,10 @@ const commands = [
   { command: "removewallet", description: "Stop tracking a wallet" },
   { command: "walletscore", description: "Smart Wallet Score" },
   { command: "alerts", description: "Custom signal rules" },
+  { command: "paper", description: "Open the Paper Arena" },
+  { command: "paperbuy", description: "Paper buy - CA amount" },
+  { command: "papersell", description: "Paper sell - CA % or all" },
+  { command: "paperlb", description: "Paper Arena standings" },
   { command: "settings", description: "Show group settings" },
   { command: "help", description: "How Kapiscout works" },
 ];
